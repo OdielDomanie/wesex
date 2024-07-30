@@ -1,4 +1,5 @@
 defmodule Wesex.Utils do
+  @moduledoc false
   defmacro flush_timer(timer, pattern) do
     quote do
       _ = Process.cancel_timer(unquote(timer), async: false)
