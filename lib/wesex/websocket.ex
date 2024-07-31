@@ -13,6 +13,16 @@ defmodule Wesex.Websocket do
 
   @type close_reason :: %{optional(:reason) => String.t(), code: nil | pos_integer()}
 
+  defguard is_closed(s) when is_struct(s, Closed)
+  defguard is_opening(s) when is_struct(s, Opening)
+  defguard is_open(s) when is_struct(s, Open)
+  defguard is_closing(s) when is_struct(s, Closing)
+
+  @doc """
+  New closed state.
+  """
+  defdelegate new, to: Closed
+
   @doc """
   Start opening the connection.
   """
