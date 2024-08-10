@@ -1,5 +1,4 @@
 defmodule Wesex do
-  alias Wesex.Websocket.Opening
   alias __MODULE__.Websocket
   require Websocket
 
@@ -10,15 +9,19 @@ defmodule Wesex do
 
   @callback init(any) ::
               {:ok, state :: any()}
-              | {:ok, state :: any, {:open, {URI.t(), Mint.Types.headers()}}}
+              | {:ok, state :: any, {:open, {URI.t(), Websocket.headers()}}}
+              | {:ok, state :: any, {:continue, any}}
               | :ignore
               | {:stop, any}
   @callback handle_call(req :: any, from :: GenServer.from(), state :: any, websocket()) ::
               {:reply, any, {state :: any, websocket()}}
-              | {:noreply, any, {state :: any, websocket()}}
+              | {:noreply, {state :: any, websocket()}}
 
   @callback handle_info(any, state :: any, websocket()) ::
-              {:noreply, any, {state :: any, websocket()}}
+              {:noreply, {state :: any, websocket()}}
+
+  @callback handle_continue(any, state :: any, websocket()) ::
+              {:noreply, {state :: any, websocket()}}
 
   @callback handle_in(Websocket.dataframe(), reference(), state :: any, websocket()) ::
               {:ok, state :: any, websocket()}
@@ -39,9 +42,27 @@ defmodule Wesex do
   @callback terminate(reason :: any, state :: any) :: any
   @optional_callbacks [terminate: 2]
 
+  defmacro __using__(child_spec_opts) do
+    quote do
+      @behaviour Wesex
+
+      def child_spec(init_arg) do
+        default = %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, [init_arg]}
+        }
+
+        Supervisor.child_spec(default, unquote(Macro.escape(child_spec_opts)))
+      end
+
+      defoverridable child_spec: 1
+    end
+  end
+
   @spec start_link(%{
           optional(:ws_opts) =>
             keyword({:con_opts, keyword()} | {:ws_opts, keyword()}) | Access.t(),
+          optional(:adapter) => Wesex.Adapter.impl(),
           cb: callback_module :: module(),
           init_arg: any,
           gen_server_opts: keyword()
@@ -55,11 +76,13 @@ defmodule Wesex do
 
   @impl GenServer
   def init(arg) do
+    adapter = arg[:adapter] || Wesex.MintAdapter
+
     case arg.cb.init(arg.user_arg) do
       {:ok, user_state} ->
         state = %{
           user_state: user_state,
-          w: Websocket.new(),
+          w: Websocket.new(adapter),
           ws_opts: arg[:ws_opts] || [],
           cb: arg.cb
         }
@@ -69,12 +92,22 @@ defmodule Wesex do
       {:ok, user_state, {:open, url_headers}} ->
         state = %{
           user_state: user_state,
-          w: Websocket.new(),
+          w: Websocket.new(adapter),
           ws_opts: arg[:ws_opts] || [],
           cb: arg.cb
         }
 
         {:ok, state, {:continue, {:open, url_headers}}}
+
+      {:ok, user_state, {:handle_continue, cont_arg}} ->
+        state = %{
+          user_state: user_state,
+          w: Websocket.new(adapter),
+          ws_opts: arg[:ws_opts] || [],
+          cb: arg.cb
+        }
+
+        {:ok, state, {:handle_continue, cont_arg}}
 
       :ignore ->
         :ignore
@@ -89,13 +122,20 @@ defmodule Wesex do
     case Websocket.open(
            state.w,
            url,
-           headers,
-           Opening.default_timeout(),
-           state.ws_opts[:con_opts] || [],
-           state.ws_opts[:ws_opts] || []
+           headers: headers,
+           con_opts: state.ws_opts[:con_opts] || [],
+           ws_opts: state.ws_opts[:ws_opts] || []
          ) do
       {:ok, w} when Websocket.is_opening(w) -> {:noreply, %{state | w: w}}
       {:error, w, reason} when Websocket.is_closed(w) -> {:stop, reason}
+    end
+  end
+
+  def handle_continue(continue_arg, state) do
+    case state.cb.handle_continue(continue_arg, state.user_state, state.w) do
+      {:noreply, {user_state, w}} ->
+        state = %{state | w: w, user_state: user_state}
+        {:noreply, state}
     end
   end
 

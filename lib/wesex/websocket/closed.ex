@@ -4,13 +4,16 @@ defmodule Wesex.Websocket.Closed do
 
   alias Wesex.Websocket.Opening
   alias __MODULE__, as: Closed
-  alias Mint.{HTTP, WebSocket}
 
-  @type t :: %__MODULE__{}
-  defstruct []
+  @type t :: %__MODULE__{
+          adapter: Wesex.Adapter.impl()
+        }
+  @enforce_keys [:adapter]
+  defstruct [:adapter]
 
   @spec new :: t
-  def new, do: %Closed{}
+  @spec new(Wesex.Adapter.impl()) :: t
+  def new(adapter \\ Wesex.MintAdapter), do: %Closed{adapter: adapter}
 
   @doc """
   Start opening the connection.
@@ -18,7 +21,7 @@ defmodule Wesex.Websocket.Closed do
   @spec open(t, URI.t(), Mint.Types.headers(), timeout, keyword() | nil, keyword() | nil) ::
           {:ok, Opening.t()} | {:error, t, reason :: any}
   def open(
-        %Closed{},
+        %Closed{adapter: adapter},
         url,
         headers,
         timeout \\ Opening.default_timeout(),
@@ -31,14 +34,14 @@ defmodule Wesex.Websocket.Closed do
     path_str = %URI{url | host: nil, port: nil, scheme: nil} |> URI.to_string()
 
     with {:ok, con} <-
-           HTTP.connect(
+           adapter.connect(
              scheme_atom,
              url.host,
              url.port,
              con_opts || []
            ),
          {:ok, con, ref} <-
-           WebSocket.upgrade(
+           adapter.upgrade(
              ws_scheme,
              con,
              path_str,
@@ -46,13 +49,13 @@ defmodule Wesex.Websocket.Closed do
              ws_opts || []
            ) do
       timer = Process.send_after(self(), {:open_timeout, ref}, timeout)
-      {:ok, %Opening{con: con, ws_ref: ref, timer: timer}}
+      {:ok, %Opening{con: con, ws_ref: ref, timer: timer, adapter: adapter}}
     else
       {:error, reason} ->
         {:error, new(), reason}
 
       {:error, con, reason} ->
-        _ = HTTP.close(con)
+        _ = adapter.close(con)
         {:error, new(), reason}
     end
   end

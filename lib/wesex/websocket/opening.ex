@@ -4,21 +4,22 @@ defmodule Wesex.Websocket.Opening do
 
   alias Wesex.Websocket.{Closed, Open}
   alias __MODULE__, as: Opening
-  alias Mint.{HTTP, Types}
+  alias Wesex.Adapter
 
   @type data_frame :: {:text, String.t()} | {:binary, binary()}
 
   @type t :: %__MODULE__{
-          status_resp: {:status, Types.request_ref(), non_neg_integer()} | nil,
-          headers_resp: {:headers, Types.request_ref(), Types.headers()} | nil,
-          done_resp: {:done, Types.request_ref()} | nil,
-          con: HTTP.t(),
+          status_resp: {:status, reference(), non_neg_integer()} | nil,
+          headers_resp: {:headers, reference(), Adapter.headers()} | nil,
+          done_resp: {:done, reference()} | nil,
+          con: Adapter.con(),
           ws_ref: reference(),
           ws_opts: keyword(),
-          timer: reference()
+          timer: reference(),
+          adapter: Adapter.impl()
         }
 
-  @enforce_keys [:con, :ws_ref, :timer]
+  @enforce_keys [:con, :ws_ref, :timer, :adapter]
   defstruct [
     :con,
     :ws_ref,
@@ -26,6 +27,7 @@ defmodule Wesex.Websocket.Opening do
     :headers_resp,
     :done_resp,
     :timer,
+    :adapter,
     ws_opts: []
   ]
 
@@ -39,8 +41,8 @@ defmodule Wesex.Websocket.Opening do
   @doc """
   Closes the `Mint.HTTP` connection.
   """
-  def fail(%Opening{con: con, timer: timer, ws_ref: ref}) do
-    _con = HTTP.close(con)
+  def fail(%Opening{con: con, timer: timer, ws_ref: ref, adapter: adapter}) do
+    _con = adapter.close(con)
     cancel_flush_timer(timer, ref)
 
     Closed.new()
@@ -70,7 +72,7 @@ defmodule Wesex.Websocket.Opening do
         } = state,
         rest_resps
       ) do
-    Mint.WebSocket.new(con, ws_ref, status, headers, ws_opts)
+    state.adapter.new(con, ws_ref, status, headers, ws_opts)
     |> case do
       {:ok, con, ws} ->
         :ok = cancel_flush_timer(state.timer, ws_ref)
@@ -81,7 +83,8 @@ defmodule Wesex.Websocket.Opening do
           ping_timer: Process.send_after(self(), {:ping_time, ws_ref}, 0),
           ping_intv: Open.default_ping_intv(),
           ws: ws,
-          ws_ref: ws_ref
+          ws_ref: ws_ref,
+          adapter: state.adapter
         }
 
         {:ok, state, rest_resps}

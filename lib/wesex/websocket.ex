@@ -3,9 +3,9 @@ defmodule Wesex.Websocket do
   Functional websocket handling.
   """
   alias __MODULE__.{Opening, Open, Closing, Closed}
-  alias Mint.{HTTP, WebSocket}
 
   @type dataframe :: {:text, String.t()} | {:binary, binary()}
+  @type headers :: [{String.t(), String.t()}]
   @type closed :: Closed.t()
   @type opening :: Opening.t()
   @type open :: Open.t()
@@ -20,30 +20,43 @@ defmodule Wesex.Websocket do
 
   @doc """
   New closed state.
+
+  Adapter is an implemantation of `Wesex.Adapter`, `Mint.WebSocket` based adapter by default.
   """
-  defdelegate new, to: Closed
+  defdelegate new(adapter \\ Wesex.MintAdapter), to: Closed
 
   @doc """
   Start opening the connection.
+
+  `opts`:
+    * `headers`
+    * `timeout \\ Opening.default_timeout()`
+    * `con_opts \\ []`
+    * `ws_opts \\ []`
   """
-  @spec open(closed, URI.t(), Mint.Types.headers(), timeout, keyword() | nil, keyword() | nil) ::
+  @spec open(closed, URI.t(), keyword()) ::
           {:ok, Opening.t()} | {:error, closed, reason :: any}
-  defdelegate open(
-                closed,
-                url,
-                headers,
-                timeout \\ Opening.default_timeout(),
-                con_opts \\ [],
-                ws_opts \\ []
-              ),
-              to: Closed
+  def open(
+        closed,
+        url,
+        opts
+      ) do
+    Closed.open(
+      closed,
+      url,
+      opts[:headers] || [],
+      opts[:timeout] || Opening.default_timeout(),
+      opts[:con_opts] || [],
+      opts[:ws_opts] || []
+    )
+  end
 
   @spec send(dataframe(), open) :: {:ok, open} | {:error, closed, reason :: any}
   def send(dataframe, %Open{} = state) do
     {:ok, ws, frame_bin} =
-      WebSocket.encode(state.ws, dataframe)
+      state.adapter.encode(state.ws, dataframe)
 
-    case WebSocket.stream_request_body(state.con, state.ws_ref, frame_bin) do
+    case state.adapter.stream_request_body(state.con, state.ws_ref, frame_bin) do
       {:ok, con} ->
         {:ok, %{state | con: con, ws: ws}}
 
@@ -54,11 +67,11 @@ defmodule Wesex.Websocket do
   end
 
   @doc """
-  Initiated closing.
+  Initiate closing.
   """
   @spec close(open, close_reason) :: closing | closed
   def close(%Open{} = state, close_reason, close_timeout \\ 5_000) do
-    case send_close(close_reason, state.con, state.ws, state.ws_ref) do
+    case send_close(close_reason, state.con, state.ws, state.ws_ref, state.adapter) do
       {:ok, con, ws} ->
         Closing.new(%{state | con: con, ws: ws}, :local, close_timeout)
 
@@ -87,7 +100,7 @@ defmodule Wesex.Websocket do
   def stream({:ping_time, ws_ref}, %Open{ws_ref: ws_ref, ponged: true} = state) do
     state = %{state | ponged: false}
 
-    case send_ping(state.con, state.ws, state.ws_ref) do
+    case send_ping(state.con, state.ws, state.ws_ref, state.adapter) do
       {:ok, con, ws} ->
         ping_timer = Process.send_after(self(), {:ping_time, ws_ref}, state.ping_intv)
         {[], %{state | con: con, ws: ws, ping_timer: ping_timer}}
@@ -124,7 +137,7 @@ defmodule Wesex.Websocket do
   end
 
   def stream(msg, %Opening{} = state) do
-    case WebSocket.stream(state.con, msg) do
+    case state.adapter.stream(state.con, msg) do
       :unknown ->
         :unknown
 
@@ -136,7 +149,7 @@ defmodule Wesex.Websocket do
       {:ok, con, resps} ->
         state = %{state | con: con}
 
-        if HTTP.open?(state.con, :write) do
+        if state.adapter.open?(state.con, :write) do
           case opening_resps(resps, state) do
             {:ok, %Opening{} = state} ->
               {[], state}
@@ -160,7 +173,7 @@ defmodule Wesex.Websocket do
   end
 
   def stream(msg, %Open{} = state) do
-    case WebSocket.stream(state.con, msg) do
+    case state.adapter.stream(state.con, msg) do
       :unknown ->
         :unknown
 
@@ -176,7 +189,7 @@ defmodule Wesex.Websocket do
   end
 
   def stream(msg, %Closing{} = state) do
-    case WebSocket.stream(state.con, msg) do
+    case state.adapter.stream(state.con, msg) do
       :unknown ->
         :unknown
 
@@ -198,11 +211,11 @@ defmodule Wesex.Websocket do
   end
 
   defp do_open_or_closing_frames(resps, state) when state.__struct__ in [Open, Closing] do
-    {frames, ws} = resps_to_frames(resps, state.ws, state.ws_ref)
+    {frames, ws} = resps_to_frames(resps, state.ws, state.ws_ref, state.adapter)
     state = %{state | ws: ws}
     {events, state} = process_frames(frames, state)
 
-    if state.__struct__ not in [Open, Closing] or HTTP.open?(state.con, :read) do
+    if state.__struct__ not in [Open, Closing] or state.adapter.open?(state.con, :read) do
       {events, state}
     else
       case state do
@@ -283,8 +296,8 @@ defmodule Wesex.Websocket do
   end
 
   defp process_frames([{:ping, _} | rest], %Open{} = state) do
-    if HTTP.open?(state.con, :write) do
-      case send_pong(state.con, state.ws, state.ws_ref) do
+    if state.adapter.open?(state.con, :write) do
+      case send_pong(state.con, state.ws, state.ws_ref, state.adapter) do
         {:ok, con, ws} ->
           state = %{state | con: con, ws: ws}
           process_frames(rest, state)
@@ -307,7 +320,7 @@ defmodule Wesex.Websocket do
     state = Closing.new(state, :remote)
     state = %{state | remote_close_reason: %{code: code, reason: reason}}
 
-    case send_close(%{code: code}, state.con, state.ws, state.ws_ref) do
+    case send_close(%{code: code}, state.con, state.ws, state.ws_ref, state.adapter) do
       {:ok, con, ws} ->
         state = %{state | con: con, ws: ws}
         {[], state}
@@ -324,37 +337,37 @@ defmodule Wesex.Websocket do
     {[], state}
   end
 
-  defp resps_to_frames([], ws, _), do: {[], ws}
+  defp resps_to_frames([], ws, _, _adapter), do: {[], ws}
 
-  defp resps_to_frames([{:data, ws_ref, frame_bin} | rest], ws, ws_ref) do
-    {:ok, ws, frames} = WebSocket.decode(ws, frame_bin)
-    {rest_frames, ws} = resps_to_frames(rest, ws, ws_ref)
+  defp resps_to_frames([{:data, ws_ref, frame_bin} | rest], ws, ws_ref, adapter) do
+    {:ok, ws, frames} = adapter.decode(ws, frame_bin)
+    {rest_frames, ws} = resps_to_frames(rest, ws, ws_ref, adapter)
     {frames ++ rest_frames, ws}
   end
 
-  defp send_pong(con, ws, ws_ref) do
-    {:ok, ws, frame_bin} = WebSocket.encode(ws, :pong)
+  defp send_pong(con, ws, ws_ref, adapter) do
+    {:ok, ws, frame_bin} = adapter.encode(ws, :pong)
 
-    case WebSocket.stream_request_body(con, ws_ref, frame_bin) do
+    case adapter.stream_request_body(con, ws_ref, frame_bin) do
       {:ok, con} -> {:ok, con, ws}
       {:error, con, reason} -> {:error, con, ws, reason}
     end
   end
 
-  defp send_ping(con, ws, ws_ref) do
-    {:ok, ws, frame_bin} = WebSocket.encode(ws, :ping)
+  defp send_ping(con, ws, ws_ref, adapter) do
+    {:ok, ws, frame_bin} = adapter.encode(ws, :ping)
 
-    case WebSocket.stream_request_body(con, ws_ref, frame_bin) do
+    case adapter.stream_request_body(con, ws_ref, frame_bin) do
       {:ok, con} -> {:ok, con, ws}
       {:error, con, reason} -> {:error, con, ws, reason}
     end
   end
 
-  defp send_close(close_reason, con, ws, ws_ref) do
+  defp send_close(close_reason, con, ws, ws_ref, adapter) do
     {:ok, ws, frame_bin} =
-      WebSocket.encode(ws, {:close, close_reason.code, close_reason[:reason] || ""})
+      adapter.encode(ws, {:close, close_reason.code, close_reason[:reason] || ""})
 
-    case WebSocket.stream_request_body(con, ws_ref, frame_bin) do
+    case adapter.stream_request_body(con, ws_ref, frame_bin) do
       {:ok, con} -> {:ok, con, ws}
       {:error, con, reason} -> {:error, con, ws, reason}
     end

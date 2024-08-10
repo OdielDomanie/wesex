@@ -1,73 +1,8 @@
-defmodule Wesex.WebsocketTest do
+defmodule Wesex.DummyAdapterTest do
   alias Wesex.Websocket
   alias Wesex.Websocket.{Closed, Opening, Open, Closing}
+  alias Wesex.DummyAdapter
   use ExUnit.Case
-
-  defmodule TestPlug do
-    alias Wesex.WebsocketTest.{
-      OpenOk,
-      Receive5Text,
-      Receive5Binary,
-      Echo,
-      CloseOnMsg,
-      ReceiveAndClose,
-      Sleep
-    }
-
-    use Plug.Router
-
-    plug(:match)
-    plug(:dispatch)
-
-    get "/open_ok" do
-      conn
-      |> WebSockAdapter.upgrade(OpenOk, [], [])
-      |> halt()
-    end
-
-    get "/open_delayed" do
-      :ok = Process.sleep(100)
-
-      conn
-      |> WebSockAdapter.upgrade(OpenOk, [], [])
-      |> halt()
-    end
-
-    get "/recv_5_text" do
-      conn
-      |> WebSockAdapter.upgrade(Receive5Text, [], [])
-    end
-
-    get "/recv_5_binary" do
-      conn
-      |> WebSockAdapter.upgrade(Receive5Binary, [], [])
-    end
-
-    get "/echo" do
-      conn
-      |> WebSockAdapter.upgrade(Echo, [], [])
-    end
-
-    get "/close_on_msg" do
-      conn
-      |> WebSockAdapter.upgrade(CloseOnMsg, [], [])
-    end
-
-    get "receive_n_close" do
-      conn
-      |> WebSockAdapter.upgrade(ReceiveAndClose, [], [])
-    end
-
-    get "sleep" do
-      conn
-      |> WebSockAdapter.upgrade(Sleep, [], [])
-    end
-
-    get "/none" do
-      _ = conn
-      exit(:normal)
-    end
-  end
 
   defmodule OpenOk do
     def init(_) do
@@ -133,39 +68,17 @@ defmodule Wesex.WebsocketTest do
     end
   end
 
-  defmodule Sleep do
-    def init(s) do
-      Process.sleep(50)
-      {:ok, s}
-    end
-  end
-
   defp port do
-    (System.get_env("WESEX_TEST_PORT", "55443") |> String.to_integer()) + 1
-  end
-
-  setup_all do
-    _test_server = start_link_supervised!(test_server())
-    :ok
-  end
-
-  defp test_server do
-    {
-      Bandit,
-      # max 100 bytes so we can test better
-      plug: TestPlug,
-      scheme: :http,
-      port: port(),
-      ip: :loopback,
-      websocket_options: [max_frame_size: 100]
-    }
+    0
   end
 
   defp url(path), do: "http://localhost:#{port()}#{path}" |> URI.new!()
 
   test "closed to opening" do
-    state = Closed.new()
-    assert {:ok, opening} = Websocket.open(state, url("/open_ok"), [])
+    state = Closed.new(DummyAdapter)
+
+    assert {:ok, opening} =
+             Websocket.open(state, url("/open_ok"), con_opts: [websock_impl: OpenOk])
 
     assert %Opening{
              con: _con,
@@ -183,8 +96,8 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "opening to open" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/open_ok"), [])
+    state = Closed.new(DummyAdapter)
+    {:ok, opening} = Websocket.open(state, url("/open_ok"), con_opts: [websock_impl: OpenOk])
     ws_ref = opening.ws_ref
 
     {events, open} = recv_until_open(opening)
@@ -202,34 +115,12 @@ defmodule Wesex.WebsocketTest do
     assert_receive {:ping_time, ^ws_ref}, 10
   end
 
-  test "opening to open, error" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/none"), [])
-    ws_ref = opening.ws_ref
-
-    {events, closed} = recv_until_open(opening)
-    assert [{:opening, ^ws_ref, :error, _reason}] = events
-    assert is_struct(closed, Closed)
-
-    assert false == Process.read_timer(opening.timer)
-    refute_receive {:ping_time, ^ws_ref}, 10
-  end
-
-  test "opening to open, timeout" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/open_delayed"), timeout: 0)
-    ws_ref = opening.ws_ref
-
-    {events, closed} = recv_until_open(opening)
-    assert [{:opening, ^ws_ref, :error, _reason}] = events
-    assert is_struct(closed, Closed)
-
-    assert false == Process.read_timer(opening.timer)
-  end
-
   test "receive text" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/recv_5_text"), [])
+    state = Closed.new(DummyAdapter)
+
+    {:ok, opening} =
+      Websocket.open(state, url("/recv_5_text"), con_opts: [websock_impl: Receive5Text])
+
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -247,8 +138,11 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "receive binary" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/recv_5_binary"), [])
+    state = Closed.new(DummyAdapter)
+
+    {:ok, opening} =
+      Websocket.open(state, url("/recv_5_binary"), con_opts: [websock_impl: Receive5Binary])
+
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -266,8 +160,8 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "send, receive text" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/echo"), [])
+    state = Closed.new(DummyAdapter)
+    {:ok, opening} = Websocket.open(state, url("/echo"), con_opts: [websock_impl: Echo])
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -284,8 +178,8 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "send, receive binary" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/echo"), [])
+    state = Closed.new(DummyAdapter)
+    {:ok, opening} = Websocket.open(state, url("/echo"), con_opts: [websock_impl: Echo])
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -302,8 +196,11 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "send, then remote close" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/close_on_msg"), [])
+    state = Closed.new(DummyAdapter)
+
+    {:ok, opening} =
+      Websocket.open(state, url("/close_on_msg"), con_opts: [websock_impl: CloseOnMsg])
+
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -321,8 +218,11 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "receive and remote close" do
-    state = Closed.new()
-    {:ok, opening} = Websocket.open(state, url("/receive_n_close"), [])
+    state = Closed.new(DummyAdapter)
+
+    {:ok, opening} =
+      Websocket.open(state, url("/receive_n_close"), con_opts: [websock_impl: ReceiveAndClose])
+
     ws_ref = opening.ws_ref
     {[{:opening, ^ws_ref, :done}], open} = recv_until_open(opening)
 
@@ -338,8 +238,8 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "local close" do
-    state = Closed.new()
-    {:ok, state} = Websocket.open(state, url("/open_ok"), [])
+    state = Closed.new(DummyAdapter)
+    {:ok, state} = Websocket.open(state, url("/open_ok"), con_opts: [websock_impl: OpenOk])
     ws_ref = state.ws_ref
     {[{:opening, ^ws_ref, :done}], state} = recv_until_open(state)
 
@@ -356,8 +256,8 @@ defmodule Wesex.WebsocketTest do
   end
 
   test "ping during lifetime" do
-    state = Closed.new()
-    {:ok, state} = Websocket.open(state, url("/open_ok"), [])
+    state = Closed.new(DummyAdapter)
+    {:ok, state} = Websocket.open(state, url("/open_ok"), con_opts: [websock_impl: OpenOk])
     ws_ref = state.ws_ref
     {[{:opening, ^ws_ref, :done}], state} = recv_until_open(state)
 
@@ -371,22 +271,6 @@ defmodule Wesex.WebsocketTest do
 
     assert [
              {:closed, ^ws_ref, :local_initiated, %{code: _}}
-           ] = events
-
-    assert is_struct(state, Closed)
-  end
-
-  test "ping timeout" do
-    state = Closed.new()
-    {:ok, state} = Websocket.open(state, url("/sleep"), [])
-    ws_ref = state.ws_ref
-    {[{:opening, ^ws_ref, :done}], state} = recv_until_open(state)
-
-    state = %Open{state | ping_intv: 10}
-    {events, state} = recv_until_event_count(state, 1)
-
-    assert [
-             {:closed, ^ws_ref, :error, :ping_timeout}
            ] = events
 
     assert is_struct(state, Closed)
