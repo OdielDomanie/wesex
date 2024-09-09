@@ -51,6 +51,9 @@ defmodule Wesex.Websocket do
     )
   end
 
+  @doc """
+  Send a websocket message.
+  """
   @spec send(dataframe(), open) :: {:ok, open} | {:error, closed, reason :: any}
   def send(dataframe, %Open{} = state) do
     {:ok, ws, frame_bin} =

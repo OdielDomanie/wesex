@@ -1,44 +1,89 @@
 defmodule Wesex do
+  @moduledoc """
+  Behaviour for a process that handles websocket communication as the client.
+
+  Doing `use Wesex` adds `@behaviour Wesex` and defines a `child_spec` function
+  """
   alias __MODULE__.Websocket
   require Websocket
 
   use GenServer
 
+  @typedoc """
+  A websocket structure.
+  """
   @type websocket ::
           Websocket.closed() | Websocket.opening() | Websocket.open() | Websocket.closing()
 
+  @doc """
+  Genserver-like init callback.
+
+  If the third element in the return tuple is in the form
+  `{:open, {URI.t(), Websocket.headers()}`, then a websocket connection
+  is opened.
+  """
   @callback init(any) ::
               {:ok, state :: any()}
               | {:ok, state :: any, {:open, {URI.t(), Websocket.headers()}}}
               | {:ok, state :: any, {:continue, any}}
               | :ignore
               | {:stop, any}
+
+  @doc """
+  Genserver-like handle_call callback.
+
+  If the process is called with `GenServer.call/3`, then this callback
+  is invoked. Arguments `state` is the state returned from the previous callback,
+  `websocket` as managed by `Wesex`.
+
+  If the `websocket` is modified eg. with `Wesex.Websocket.send/2`, then the new
+  modified websocket must be returned.
+  """
   @callback handle_call(req :: any, from :: GenServer.from(), state :: any, websocket()) ::
               {:reply, any, {state :: any, websocket()}}
               | {:noreply, {state :: any, websocket()}}
 
+  @doc """
+  Genserver-like callback. See `c:handle_call/4`.
+  """
   @callback handle_info(any, state :: any, websocket()) ::
               {:noreply, {state :: any, websocket()}}
 
+  @doc """
+  Genserver-like callback. See `c:handle_call/4`.
+  """
   @callback handle_continue(any, state :: any, websocket()) ::
               {:noreply, {state :: any, websocket()}}
 
+  @doc """
+  Called when a websocket message arrives.
+  """
   @callback handle_in(Websocket.dataframe(), reference(), state :: any, websocket()) ::
               {:ok, state :: any, websocket()}
 
-  @callback handle_open(:done | {:error, any}, reference(), state :: any, websocket()) ::
+  @doc """
+  Called when the websocket completes its opening handshake.
+  """
+  @callback handle_open(:done | {:error, any}, open_ref :: reference(), state :: any, websocket()) ::
               {:ok, state :: any, websocket()}
 
+  @doc """
+  Called when the websocket finalized its closing.
+  """
   @callback handle_close(
-              {:local_initiated | :remote_initiated,
-               remote_close_reason :: Websocket.close_reason()}
-              | {:error, any},
-              reference(),
+              close_reason ::
+                {:local_initiated | :remote_initiated,
+                 remote_close_reason :: Websocket.close_reason()}
+                | {:error, any},
+              close_ref :: reference(),
               state :: any,
               websocket()
             ) ::
               {:ok, state :: any, websocket()}
 
+  @doc """
+  Optional Genserver-like callback. See `c:handle_call/4`.
+  """
   @callback terminate(reason :: any, state :: any) :: any
   @optional_callbacks [terminate: 2]
 
@@ -60,13 +105,25 @@ defmodule Wesex do
   end
 
   @spec start_link(%{
-          optional(:ws_opts) =>
+          optional(:adapter_opts) =>
             keyword({:con_opts, keyword()} | {:ws_opts, keyword()}) | Access.t(),
           optional(:adapter) => Wesex.Adapter.impl(),
           cb: callback_module :: module(),
           init_arg: any,
           gen_server_opts: keyword()
         }) :: GenServer.on_start()
+  @doc """
+  Start a `Wesex` process linked.
+
+  Arguments:
+  * `:cb` - Callback module that implements `Wesex` behaviour.
+  * `:init_arg` - Given to `c:init/1`
+  * `:gen_server_opts` - `t:GenServer.options/0`
+  * `:adapter_opts` - (optional) Map/keywords of `:con_opts` and `:ws_opts` given to the adapter.
+  * `:adapter` - (optional) A module that implements `Wesex.Adapter`, `Wesex.MintAdapter` by default.
+
+  Traps exits after calling the `init` function.
+  """
   def start_link(
         %{cb: _callback_module, init_arg: _user_arg, gen_server_opts: _gen_server_opts} = args
       ) do
@@ -83,9 +140,11 @@ defmodule Wesex do
         state = %{
           user_state: user_state,
           w: Websocket.new(adapter),
-          ws_opts: arg[:ws_opts] || [],
+          adapter_opts: arg[:adapter_opts] || [],
           cb: arg.cb
         }
+
+        true = Process.flag(:trap_exit, true)
 
         {:ok, state}
 
@@ -93,9 +152,11 @@ defmodule Wesex do
         state = %{
           user_state: user_state,
           w: Websocket.new(adapter),
-          ws_opts: arg[:ws_opts] || [],
+          adapter_opts: arg[:adapter_opts] || [],
           cb: arg.cb
         }
+
+        true = Process.flag(:trap_exit, true)
 
         {:ok, state, {:continue, {:open, url_headers}}}
 
@@ -103,9 +164,11 @@ defmodule Wesex do
         state = %{
           user_state: user_state,
           w: Websocket.new(adapter),
-          ws_opts: arg[:ws_opts] || [],
+          adapter_opts: arg[:adapter_opts] || [],
           cb: arg.cb
         }
+
+        true = Process.flag(:trap_exit, true)
 
         {:ok, state, {:handle_continue, cont_arg}}
 
@@ -123,8 +186,8 @@ defmodule Wesex do
            state.w,
            url,
            headers: headers,
-           con_opts: state.ws_opts[:con_opts] || [],
-           ws_opts: state.ws_opts[:ws_opts] || []
+           con_opts: state.adapter_opts[:con_opts] || [],
+           ws_opts: state.adapter_opts[:ws_opts] || []
          ) do
       {:ok, w} when Websocket.is_opening(w) -> {:noreply, %{state | w: w}}
       {:error, w, reason} when Websocket.is_closed(w) -> {:stop, reason}
@@ -196,19 +259,6 @@ defmodule Wesex do
       {:ok, user_state} ->
         state = put_in(state.user_state, user_state)
         handle_info_events(rest, state)
-
-        # {:push, dataframe_pushes, user_state} ->
-        #   state = put_in(state.user_state, user_state)
-        #   {push_results, state} = push_dataframes(dataframe_pushes, state)
-        #   handle_info_events(rest ++ push_results, state)
-        # {:close, close_reason, dataframe_pushes, user_state} ->
-
-        #   state = put_in(state.user_state, user_state)
-        #   {push_results, state} = push_dataframes(dataframe_pushes, state)
-        #   w = close_if_open(state.w, close_reason)
-        #   case close(state.w, close_reason) do
-        #     w when is_closing(w) ->
-        #   end
     end
   end
 
@@ -239,31 +289,4 @@ defmodule Wesex do
   defp user_handle_info(msg, state) do
     state.cb.handle_info(msg, state.user_state, state.w)
   end
-
-  # defp close(w, close_reason) when is_open(w), do: Websocket.close(w, close_reason)
-  # defp close(w, close_reason) when is_open(w), do: Websocket.close(w, close_reason)
-
-  # defp push_dataframes([], state), do: {[], state}
-
-  # defp push_dataframes([{ref, dataframe} | rest], state) when is_open(state.w) do
-  #   case Websocket.send(dataframe, state.w) do
-  #     {:ok, w} ->
-  #       state = put_in(state.w, w)
-  #       event = {:push, ref, :done}
-  #       {rest_events, state} = push_dataframes(rest, state)
-  #       {[event | rest_events], state}
-
-  #     {:error, w, reason} ->
-  #       state = put_in(state.w, w)
-  #       event = {:push, ref, :error, reason}
-  #       {rest_events, state} = push_dataframes(rest, state)
-  #       {[event | rest_events], state}
-  #   end
-  # end
-
-  # defp push_dataframes([{ref, _dataframe} | rest], state) when not is_open(state.w) do
-  #   event = {:push, ref, :error, :closed}
-  #   {rest_events, state} = push_dataframes(rest, state)
-  #   {[event | rest_events], state}
-  # end
 end

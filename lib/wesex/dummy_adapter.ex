@@ -23,6 +23,8 @@ defmodule Wesex.DummyAdapter do
           }
         }
 
+  def websocket, do: :ws
+
   @impl true
   def encode(:ws, {:enc_error, reason} = _frame) do
     {:error, :ws, reason}

@@ -1,4 +1,7 @@
 defmodule Wesex.Adapter do
+  @moduledoc """
+  Websocket module behaviour for `Wesex.Websocket`
+  """
   @type impl :: module()
 
   @type websocket :: term
@@ -41,7 +44,7 @@ defmodule Wesex.Adapter do
 
   @callback open?(con(), :read | :write) :: boolean()
 
-  @callback connect(:http | :https, String.t(), 0..65535, keyword()) ::
+  @callback connect(:http | :https, String.t(), 0..65_535, con_opts :: keyword()) ::
               {:ok, con()} | {:error, reason()}
 
   @callback close(con()) :: {:ok, con()}
@@ -54,7 +57,7 @@ defmodule Wesex.Adapter do
               conn :: con(),
               path :: String.t(),
               headers :: headers(),
-              opts :: keyword()
+              ws_opts :: keyword()
             ) :: {:ok, con(), reference()} | {:error, con(), reason()}
 
   @callback new(

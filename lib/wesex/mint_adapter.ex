@@ -1,4 +1,7 @@
 defmodule Wesex.MintAdapter do
+  @moduledoc """
+  `Mint.WebSocket` adapter `Wesex.Adapter`.
+  """
   @behaviour Wesex.Adapter
 
   defdelegate encode(websocket, frame), to: Mint.WebSocket
