@@ -31,11 +31,6 @@ defmodule Wesex.Websocket.Opening do
     ws_opts: []
   ]
 
-  @doc false
-  def ok_fun, do: :ok
-  @doc false
-  def ok_fun(_), do: :ok
-
   def default_timeout, do: 5_000
 
   @doc """
