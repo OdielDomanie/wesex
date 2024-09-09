@@ -62,9 +62,14 @@ defmodule Wesex do
               {:ok, state :: any, websocket()}
 
   @doc """
-  Called when the websocket completes its opening handshake.
+  Called when the websocket completes or fails its opening handshake.
   """
-  @callback handle_open(:done | {:error, any}, open_ref :: reference(), state :: any, websocket()) ::
+  @callback handle_open(
+              result :: :done | {:error, any},
+              open_ref :: reference(),
+              state :: any,
+              websocket()
+            ) ::
               {:ok, state :: any, websocket()}
 
   @doc """
