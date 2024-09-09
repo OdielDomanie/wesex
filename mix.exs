@@ -24,7 +24,8 @@ defmodule Wesex.MixProject do
       {:mint_web_socket, "~> 1.0.4"},
       {:websock_adapter, "~> 0.5", only: [:dev, :test]},
       {:bandit, "~> 1.0", only: [:dev, :test]},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
   end
 end
