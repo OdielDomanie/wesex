@@ -76,10 +76,14 @@ defmodule Wesex do
       @impl GenServer
       def terminate(reason, %Connection{} = con) do
         con =
-          if Connection.short_status(con) in [:handshaking, :open] do
-            Connection.close(con, 1000, nil)
+          if reason == :normal or match?({:shutdown, _}, reason) do
+            if Connection.short_status(con) in [:handshaking, :open] do
+              Connection.close(con, 1000, nil)
+            else
+              con
+            end
           else
-            con
+            Connection.abort(con)
           end
 
         recv_until_closed(con)

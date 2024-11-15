@@ -178,6 +178,16 @@ defmodule Wesex.Connection do
   end
 
   @doc """
+  Close the connection abruptly.
+  """
+  @spec abort(t) :: t
+  def abort(%C{} = con) do
+    {adapter_state, new_events} = con.adapter.abort(con.adapter_state)
+    con = %C{con | adapter_state: adapter_state}
+    do_events(con, new_events)
+  end
+
+  @doc """
   Feed a received event.
 
   This will alter the connection struct and may call the callbacks.
