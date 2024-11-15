@@ -2,6 +2,9 @@ defmodule Wesex.Connection do
   @moduledoc """
   Manage a websocket connection by functionally manipulating a connection struct.
 
+  The functions may set up timers, whose messages should  be received
+  and given to `event/2`.
+
   ## State diagram
   ```mermaid.js
   stateDiagram-v2
@@ -104,6 +107,8 @@ defmodule Wesex.Connection do
 
   @doc """
   Start a websocket connection.
+
+  Returns a connection in the handshaking stage.
   """
   @spec connect(
           module(),
@@ -186,8 +191,11 @@ defmodule Wesex.Connection do
 
   def event(%C{} = connection, event) do
     case connection.adapter.event(connection.adapter_state, event) do
-      {:event, connection_events} -> do_events(connection, connection_events)
-      false -> false
+      {adapter_state, connection_events} ->
+        do_events(%C{connection | adapter_state: adapter_state}, dbg(connection_events))
+
+      false ->
+        false
     end
   end
 
@@ -324,6 +332,8 @@ defmodule Wesex.Connection do
   # remote close
   def do_events(%C{status: {:open, _}} = con, [{:close, code, reason} | rest]) do
     {adapter_state, new_events} = con.adapter.local_close(con.adapter_state, {code, nil})
+    {timer, :ping_timer} = con.timer
+    :ok = cancel_timer(timer, :ping_timer, con.ref)
     close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
 
     con = %C{

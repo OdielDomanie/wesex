@@ -10,7 +10,7 @@ defmodule Wesex.MintAdapter do
            record(:state,
              conn: Mint.HTTP.t(),
              ref: reference(),
-             ws: :waiting_status | :waiting_headers | :waiting_done | Mint.WebSocket.t()
+             ws: :waiting_status | :waiting_headers | Mint.WebSocket.t()
            )
 
   @impl true
@@ -22,15 +22,18 @@ defmodule Wesex.MintAdapter do
       end
 
     ws_scheme = String.to_existing_atom(url.scheme)
-    address = %URI{userinfo: url.userinfo, host: url.host, port: url.port} |> URI.to_string()
-    path = %URI{path: url.path, query: url.query, fragment: url.query} |> URI.to_string()
 
-    case Mint.HTTP.connect(http_scheme, address, opts[:conn]) do
+    %URI{userinfo: nil, host: host, port: port} = url
+
+    path =
+      %URI{path: url.path, query: url.query, fragment: url.fragment} |> URI.to_string()
+
+    case Mint.HTTP.connect(http_scheme, host, port, opts[:conn] || []) do
       {:error, reason} ->
         {:error, reason}
 
       {:ok, conn} ->
-        case Mint.WebSocket.upgrade(ws_scheme, conn, path, headers, opts[:ws]) do
+        case Mint.WebSocket.upgrade(ws_scheme, conn, path, headers, opts[:ws] || []) do
           {:error, conn, reason} ->
             {:ok, _} = Mint.HTTP.close(conn)
             {:error, reason}
@@ -51,7 +54,7 @@ defmodule Wesex.MintAdapter do
 
   @impl true
   def local_close(state, {code, reason}) do
-    send_frame(state, {:close, code, reason})
+    send_frame(state, {:close, code, reason || ""})
   end
 
   @impl true
@@ -103,19 +106,27 @@ defmodule Wesex.MintAdapter do
   @impl true
   def event(state(conn: conn) = state, event) do
     case Mint.WebSocket.stream(conn, event) do
-      :unknown -> false
-      {:ok, conn, resps} -> do_stream_results(state, conn, resps)
-      {:error, conn, _error, resps} -> do_stream_results(state, conn, resps)
+      :unknown ->
+        false
+
+      {:ok, conn, resps} ->
+        do_stream_results(state, conn, resps)
+
+      {:error, conn, error, resps} ->
+        dbg(error)
+        do_stream_results(state, conn, resps)
     end
   end
 
   defp do_stream_results(state, conn, resps) do
     {state, gen_events} = do_resps(state(state, conn: conn), resps)
+    dbg(resps)
+    dbg(gen_events)
 
     if Mint.HTTP.open?(conn) do
-      {state, gen_events ++ [:tcp_close]}
-    else
       {state, gen_events}
+    else
+      {state, gen_events ++ [:tcp_close]}
     end
   end
 
@@ -137,16 +148,12 @@ defmodule Wesex.MintAdapter do
     {state(state, conn: conn), [:tcp_close]}
   end
 
-  defp do_resps(
-         state(conn: _conn, ref: ref, ws: :waiting_headers) = state,
-         [{:headers, ref, resp_headers} | rest]
-       ) do
-    state = state(state, ws: {:waiting_done, resp_headers})
+  defp do_resps(state(ref: ref) = state, [{:done, ref} | rest]) do
     do_resps(state, rest)
   end
 
   defp do_resps(
-         state(conn: conn, ref: ref, ws: {:waiting_done, resp_headers}) = state,
+         state(conn: conn, ref: ref, ws: :waiting_headers) = state,
          [{:headers, ref, resp_headers} | rest]
        ) do
     {:ok, conn, websocket} = Mint.WebSocket.new(conn, ref, 101, resp_headers)
@@ -169,9 +176,13 @@ defmodule Wesex.MintAdapter do
   defp events_from_frames([]), do: []
 
   defp events_from_frames([{msg_type, data} | rest])
-       when msg_type in [:text, :binary, :ping, :pong] do
+       when msg_type in [:text, :binary, :ping] do
     event = {msg_type, data}
     [event | events_from_frames(rest)]
+  end
+
+  defp events_from_frames([{:pong, _data} | rest]) do
+    [:pong | events_from_frames(rest)]
   end
 
   defp events_from_frames([{:close, code, data} | rest]) do

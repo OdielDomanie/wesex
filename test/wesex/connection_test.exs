@@ -39,8 +39,8 @@ defmodule Wesex.ConnectionTest do
     @behaviour Wesex.Adapter
     def init, do: []
     @impl true
-    def connect(_url, _headers, _opts) do
-      raise "not implemented"
+    def connect(url, _headers, _opts) do
+      {:ok, [{:connected, url}]}
     end
 
     @impl true
@@ -111,6 +111,48 @@ defmodule Wesex.ConnectionTest do
   defp add_timer(connection, timer_type, time \\ 5_000) do
     timer = Process.send_after(self(), {connection.ref, timer_type}, time)
     %Connection{connection | timer: {timer, timer_type}}
+  end
+
+  test "connect/5" do
+    assert {:ok, connection} =
+             Connection.connect(
+               @mock_adapter,
+               {@mock_callbacks, @mock_callbacks.init()},
+               "wss://foo.test/bar?baz=123",
+               [],
+               []
+             )
+
+    uri = URI.new!("wss://foo.test/bar?baz=123")
+
+    assert %Connection{
+             adapter: @mock_adapter,
+             adapter_state: [{:connected, ^uri}],
+             callbacks: @mock_callbacks,
+             callback_state: [],
+             ref: ref,
+             status: :handshaking,
+             timer: {timer, :handshake_timeout}
+           } = connection
+
+    assert is_reference(ref)
+    assert_in_delta Process.read_timer(timer), 4000, 10
+  end
+
+  test "send/2", %{connection: connection} do
+    connection =
+      %Connection{connection | status: {:open, :unponged}}
+      |> add_timer(:ping_timer)
+
+    assert {:ok, connection} =
+             Connection.send(
+               connection,
+               {:binary, "foo"}
+             )
+
+    assert connection.status == {:open, :unponged}
+    assert connection.callback_state == []
+    assert connection.adapter_state == [{:sent, {:binary, "foo"}}]
   end
 
   describe "do_events/2" do

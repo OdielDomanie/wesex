@@ -9,8 +9,8 @@ defmodule Wesex do
       use GenServer, unquote(arg)
 
       @impl GenServer
-      def init(init_arg) do
-        init_arg = Keyword.fetch!(opts, :init_arg)
+      def init(opts) do
+        cb_state = Keyword.fetch!(opts, :cb_state)
         callbacks = Keyword.fetch!(opts, :callbacks)
         adapter = opts[:adapter] || MintAdapter
         url = Keyword.fetch!(opts, :url)
@@ -29,8 +29,15 @@ defmodule Wesex do
       @impl GenServer
       def handle_info(msg, conn) do
         case Connection.event(conn, msg) do
-          %Connection{} = conn -> {:noreply, conn}
-          false -> {:noreply, conn, {:continue, :handle_info}}
+          %Connection{} = conn ->
+            if Connection.short_status(conn) == :closed do
+              {:stop, :normal, conn}
+            else
+              {:noreply, conn}
+            end
+
+          false ->
+            {:noreply, conn, {:continue, :handle_info}}
         end
       end
 
