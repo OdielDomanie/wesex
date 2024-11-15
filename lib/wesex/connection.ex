@@ -64,7 +64,7 @@ defmodule Wesex.Connection do
              replies :: [{:text | :binary, binary(), reference()}]}
 
   @callback handle_connected(callback_state :: any) :: callback_return()
-  @callback handle_message(
+  @callback handle_in(
               message :: {:text | :binary, binary()},
               callback_state :: any,
               :open | :closing
@@ -235,13 +235,13 @@ defmodule Wesex.Connection do
   # message
   def do_events(%C{status: {:open, _}} = con, [{type, _data} = msg | rest])
       when is_msg_type(type) do
-    result = con.callbacks.handle_message(msg, con.callback_state, :open)
+    result = con.callbacks.handle_in(msg, con.callback_state, :open)
     process_callback_result(result, con, rest)
   end
 
   def do_events(%C{status: :local_closing} = con, [{type, _data} = msg | rest])
       when is_msg_type(type) do
-    result = con.callbacks.handle_message(msg, con.callback_state, :closing)
+    result = con.callbacks.handle_in(msg, con.callback_state, :closing)
     process_callback_result(result, con, rest)
   end
 

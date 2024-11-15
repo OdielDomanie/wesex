@@ -8,7 +8,7 @@ defmodule Wesex.ConnectionTest do
     @impl true
     def handle_connected(state), do: {:ok, [:connected | state], []}
     @impl true
-    def handle_message({:text, "reply to this twice"} = msg, callback_state, status) do
+    def handle_in({:text, "reply to this twice"} = msg, callback_state, status) do
       replies = [
         {:text, "reply 1", make_ref()},
         {:text, "reply 2 bad", make_ref()}
@@ -17,11 +17,11 @@ defmodule Wesex.ConnectionTest do
       {:ok, [{:received, msg, status} | callback_state], replies}
     end
 
-    def handle_message({:binary, "do stop 1001"} = msg, callback_state, status) do
+    def handle_in({:binary, "do stop 1001"} = msg, callback_state, status) do
       {{:stop, 1001, nil}, [{:received, msg, status} | callback_state], []}
     end
 
-    def handle_message(msg, callback_state, status) do
+    def handle_in(msg, callback_state, status) do
       {:ok, [{:received, msg, status} | callback_state], []}
     end
 

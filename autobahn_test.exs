@@ -22,7 +22,7 @@ defmodule AutobahnTest do
   end
 
   @impl Connection
-  def handle_message({type, data}, state, _status) do
+  def handle_in({type, data}, state, _status) do
     {:ok, state, [{type, data, make_ref()}]}
   end
 
