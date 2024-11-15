@@ -112,16 +112,13 @@ defmodule Wesex.MintAdapter do
       {:ok, conn, resps} ->
         do_stream_results(state, conn, resps)
 
-      {:error, conn, error, resps} ->
-        dbg(error)
+      {:error, conn, _error, resps} ->
         do_stream_results(state, conn, resps)
     end
   end
 
   defp do_stream_results(state, conn, resps) do
     {state, gen_events} = do_resps(state(state, conn: conn), resps)
-    dbg(resps)
-    dbg(gen_events)
 
     if Mint.HTTP.open?(conn) do
       {state, gen_events}

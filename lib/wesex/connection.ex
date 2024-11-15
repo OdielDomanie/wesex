@@ -192,7 +192,7 @@ defmodule Wesex.Connection do
   def event(%C{} = connection, event) do
     case connection.adapter.event(connection.adapter_state, event) do
       {adapter_state, connection_events} ->
-        do_events(%C{connection | adapter_state: adapter_state}, dbg(connection_events))
+        do_events(%C{connection | adapter_state: adapter_state}, connection_events)
 
       false ->
         false
