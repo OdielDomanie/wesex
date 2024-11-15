@@ -3,6 +3,9 @@ defmodule AutobahnTest do
   use Wesex
   @behaviour Connection
 
+  # Fails 6.4.3 and 6.4.4 when we send a ping first
+  # Maybe a mint_web_socket bug?
+
   def start_link(opts) do
     {wesex_opts, genserver_opts} = Keyword.split(opts, [:url, :headers, :adapter_opts, :init_arg])
     GenServer.start_link(__MODULE__, wesex_opts, genserver_opts)
@@ -36,7 +39,7 @@ defmodule AutobahnTest do
         end
       end,
       timeout: 300_000,
-      max_concurrency: 10
+      max_concurrency: 20
     )
     |> Stream.run()
   end
