@@ -1,5 +1,7 @@
 defmodule Wesex do
   @moduledoc """
+  Defines a GenServer that acts as a websocket client.
+
   Using (`use`) this module does the following:
 
   * `use GenServer`

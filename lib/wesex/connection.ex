@@ -1,12 +1,12 @@
 defmodule Wesex.Connection do
   @moduledoc """
-  Manage a websocket connection by functionally manipulating a connection struct.
+  Manages a websocket connection by functionally manipulating a connection struct.
 
   The functions may set up timers, whose messages should  be received
   and given to `event/2`.
 
   ## State diagram
-  ```mermaid.js
+  ```mermaid
   stateDiagram-v2
   [*] --> handshaking: connect/4
   handshaking --> closed: handshake timeout
@@ -106,7 +106,7 @@ defmodule Wesex.Connection do
   end
 
   @doc """
-  Start a websocket connection.
+  Starts a websocket connection.
 
   Returns a connection in the handshaking stage.
   """
@@ -151,7 +151,7 @@ defmodule Wesex.Connection do
   end
 
   @doc """
-  Send a websocket message.
+  Sends a websocket message.
   """
   @spec send(t, {:text | :binary, binary()}) :: {:ok, t} | {:error, any, t}
   def send(%C{} = con, {type, _data} = msg) when is_msg_type(type) do
@@ -169,7 +169,7 @@ defmodule Wesex.Connection do
   end
 
   @doc """
-  Start the closing process (eg. the closing handshake).
+  Starts the closing process (eg. the closing handshake).
   """
   @spec close(t, 1000..4999, nil | binary()) :: t
   def close(%C{} = con, stop_code, stop_reason \\ nil) do
@@ -178,7 +178,7 @@ defmodule Wesex.Connection do
   end
 
   @doc """
-  Close the connection abruptly.
+  Closes the connection abruptly.
   """
   @spec abort(t) :: t
   def abort(%C{} = con) do
@@ -188,7 +188,7 @@ defmodule Wesex.Connection do
   end
 
   @doc """
-  Feed a received event.
+  Feeds a received event.
 
   This will alter the connection struct and may call the callbacks.
   """
