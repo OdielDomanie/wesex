@@ -1,4 +1,7 @@
 defmodule Wesex.Adapter do
+  @moduledoc """
+  The behaviour for the connection adapter for `Wesex.Connection`.
+  """
   alias Wesex.Connection
 
   @type state :: any

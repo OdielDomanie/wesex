@@ -1,4 +1,7 @@
 defmodule Wesex.MintAdapter do
+  @moduledoc """
+  `Wesex.Adapter` implementation that uses the mint library.
+  """
   alias Wesex.{Adapter, Connection}
   import Record
 
