@@ -13,7 +13,7 @@ defmodule Wesex.MockServer do
   `opts` is a keyword list with:
   * `:websock` - `WebSock` implementing module
   * `:init_arg` - Passed to `c:WebSock.init/1`, default `nil`
-  * `:uri` - `t:URI.t/0` struct that `Wesex.MockAdapter.connect/3` must match to.
+  * `:uri` - `t:URI.t/0` struct that `Wesex.Connection.connect/5` must match to.
   * `:send_to` - pid to send events to
   """
   def start_link(opts) do
