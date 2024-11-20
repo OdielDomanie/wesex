@@ -48,15 +48,18 @@ defmodule Wesex.Connection do
   @type stop_code_reason :: {1000..4999 | nil, binary() | nil}
   @type timer_type :: :handshake_timeout | :ping_timer | :close_timeout
 
-  @type event ::
+  @opaque event ::
+            adapter_event()
+            | {reference(), timer_type()}
+            | {:sent, reference()}
+            | {:send_error, reference(), reason :: any}
+
+  @type adapter_event ::
           :handshake_complete
-          | timer_type()
           | {:ping | :pong, nil | binary()}
           | {:text | :binary, binary()}
           | {:close, 1000..4999 | nil, binary() | nil}
           | :tcp_close
-          | {:sent, reference()}
-          | {:send_error, reference(), reason :: any}
 
   @type callback_return ::
           {:ok, callback_state :: any, replies :: [{:text | :binary, binary(), reference()}]}

@@ -4,7 +4,7 @@ defmodule Wesex.MixProject do
   def project do
     [
       app: :wesex,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -25,6 +25,7 @@ defmodule Wesex.MixProject do
   defp deps do
     [
       {:mint_web_socket, "~> 1.0.4"},
+      {:websock, ">= 0.5.0 and <= 0.6.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.31", only: :dev, runtime: false}
     ]
