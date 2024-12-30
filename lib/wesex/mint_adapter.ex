@@ -1,6 +1,6 @@
 defmodule Wesex.MintAdapter do
   @moduledoc """
-  `Wesex.Adapter` implementation that uses the mint library.
+  `Wesex.Adapter` implementation that uses the `Mint.WebSocket` library.
   """
   alias Wesex.{Adapter, Connection}
   import Record
@@ -49,8 +49,8 @@ defmodule Wesex.MintAdapter do
 
   @impl true
   @spec send(state, {:text | :binary, binary()}) ::
-          {:ok, state, [Connection.event()]}
-          | {:error, state, [Connection.event()], reason :: any}
+          {:ok, state, [Connection.adapter_event()]}
+          | {:error, state, [Connection.adapter_event()], reason :: any}
   def send(state, msg) do
     send_frame_result(state, msg)
   end
@@ -92,7 +92,7 @@ defmodule Wesex.MintAdapter do
   end
 
   @impl true
-  @spec abort(state()) :: {state(), [Connection.event()]}
+  @spec abort(state()) :: {state(), [Connection.adapter_event()]}
   def abort(state(conn: conn) = state) do
     {:ok, conn} = Mint.HTTP.close(conn)
     {state(state, conn: conn), tcp_close_events_if_closed(conn)}

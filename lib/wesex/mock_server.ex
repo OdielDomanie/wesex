@@ -14,7 +14,9 @@ defmodule Wesex.MockServer do
   * `:websock` - `WebSock` implementing module
   * `:init_arg` - Passed to `c:WebSock.init/1`, default `nil`
   * `:uri` - `t:URI.t/0` struct that `Wesex.Connection.connect/5` must match to.
-  * `:send_to` - pid to send events to
+  * `:send_to` - pid to send events to.
+      This is the process that should `receive` the events and call `Wesex.Connection.event/2`
+      with a connection that has the `Wesex.MockAdapter` adapter.
   """
   def start_link(opts) do
     {mock_opts, other_opts} = Keyword.split(opts, [:websock, :init_arg, :uri, :send_to])

@@ -24,7 +24,7 @@ defmodule Wesex.MockAdapter do
   end
 
   @impl true
-  @spec abort(state()) :: {state(), [Wesex.Connection.event()]}
+  @spec abort(state()) :: {state(), [Wesex.Connection.adapter_event()]}
   def abort(state) do
     _ = Process.exit(state, {:shutdown, :abort})
     {state, []}
@@ -32,7 +32,7 @@ defmodule Wesex.MockAdapter do
 
   @impl true
   @spec local_close(state(), code_reason :: {1000..4999, nil | binary()}) ::
-          {state(), [Wesex.Connection.event()]}
+          {state(), [Wesex.Connection.adapter_event()]}
   def local_close(state, {code, reason}) do
     events = GenServer.call(state, {:close, code, reason})
     {state, events}
@@ -40,8 +40,8 @@ defmodule Wesex.MockAdapter do
 
   @impl true
   @spec send(state(), message :: {:text | :binary, binary()}) ::
-          {:ok, state(), [Wesex.Connection.event()]}
-          | {:error, state(), [Wesex.Connection.event()], reason :: any()}
+          {:ok, state(), [Wesex.Connection.adapter_event()]}
+          | {:error, state(), [Wesex.Connection.adapter_event()], reason :: any()}
   def send(state, message) do
     if Process.alive?(state) do
       try do
@@ -57,21 +57,22 @@ defmodule Wesex.MockAdapter do
   end
 
   @impl true
-  @spec send_ping(state()) :: {state(), [Wesex.Connection.event()]}
+  @spec send_ping(state()) :: {state(), [Wesex.Connection.adapter_event()]}
   def send_ping(state) do
     events = GenServer.call(state, {:ping, nil})
     {state, events}
   end
 
   @impl true
-  @spec send_pong(state(), binary()) :: {state(), [Wesex.Connection.event()]}
+  @spec send_pong(state(), binary()) :: {state(), [Wesex.Connection.adapter_event()]}
   def send_pong(state, _binary) do
     events = GenServer.call(state, :pong)
     {state, events}
   end
 
   @impl true
-  @spec event(state(), raw_event :: any()) :: {state(), [Wesex.Connection.event()]} | false
+  @spec event(state(), raw_event :: any()) ::
+          {state(), [Wesex.Connection.adapter_event()]} | false
   def event(state, raw_event) do
     case raw_event do
       {:mock_server_messages, messages} ->
