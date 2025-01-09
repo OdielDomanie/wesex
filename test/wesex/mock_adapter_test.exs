@@ -42,6 +42,11 @@ defmodule MockAdapterTest do
   end
 
   describe "connect/3" do
+    setup ctx do
+      [:handshake_complete] = receive_events(ctx.connected)
+      :ok
+    end
+
     test "returns ok", %{mock_server: server} do
       assert {:ok, _adapter} = MockAdapter.connect(@mock_uri, [], server: server)
     end
@@ -49,6 +54,12 @@ defmodule MockAdapterTest do
     test "returns error at wrong uri", %{mock_server: server} do
       assert {:error, _adapter} =
                MockAdapter.connect(URI.new!("wss://mock/bar"), [], server: server)
+    end
+
+    test "returns ok, receive events, is connected", %{mock_server: server} do
+      assert {:ok, state} = MockAdapter.connect(@mock_uri, [], server: server)
+      adapter_events = receive_events(state)
+      assert [:handshake_complete] == adapter_events
     end
   end
 
@@ -59,7 +70,7 @@ defmodule MockAdapterTest do
 
     test "{:mock_server_messages, _}", %{mock_server: server} do
       messages = [text: "abc", ping: nil]
-      {^server, events} = MockAdapter.event(server, {:mock_server_messages, messages})
+      {events, ^server} = MockAdapter.event({:mock_server_messages, messages}, server)
       assert events == messages
     end
 
@@ -68,7 +79,7 @@ defmodule MockAdapterTest do
 
       assert_receive {:DOWN, _ref, :process, ^server, _reason} = msg, 10
 
-      {^server, events} = MockAdapter.event(server, msg)
+      {events, ^server} = MockAdapter.event(msg, server)
       assert events == [:tcp_close]
     end
   end
@@ -76,8 +87,8 @@ defmodule MockAdapterTest do
   defp receive_events(state, timeout \\ 5) do
     receive do
       msg ->
-        case MockAdapter.event(state, msg) do
-          {_state, events} ->
+        case MockAdapter.event(msg, state) do
+          {events, ^state} ->
             receive_events(state, timeout) ++ events
             # false -> []
         end
@@ -87,8 +98,13 @@ defmodule MockAdapterTest do
   end
 
   describe "server behavior" do
+    setup ctx do
+      [:handshake_complete] = receive_events(ctx.connected)
+      :ok
+    end
+
     test "send_pong/2", %{connected: server} do
-      {^server, events} = MockAdapter.send_pong(server, nil)
+      {events, ^server} = MockAdapter.send_pong(nil, server)
       events = events ++ receive_events(server)
       assert events == []
       # handle_control not implemented
@@ -96,20 +112,20 @@ defmodule MockAdapterTest do
     end
 
     test "send ping, get pong", %{connected: server} do
-      {^server, events} = MockAdapter.send_ping(server)
+      {events, ^server} = MockAdapter.send_ping(server)
       events = events ++ receive_events(server)
       assert events == [pong: nil]
     end
 
     test "client close", %{connected: server} do
       code_reason = {1000, "foo"}
-      {^server, events} = MockAdapter.local_close(server, code_reason)
+      {events, ^server} = MockAdapter.local_close(code_reason, server)
       events = events ++ receive_events(server)
       assert events == [{:close, 1000, nil}, :tcp_close]
     end
 
     test "abort", %{connected: server} do
-      {^server, events} = MockAdapter.abort(server)
+      {events, ^server} = MockAdapter.abort(server)
 
       events = events ++ receive_events(server)
       assert events == [:tcp_close]
@@ -117,14 +133,14 @@ defmodule MockAdapterTest do
 
     test "send", %{connected: server} do
       message = {:text, "Hello"}
-      assert {:ok, server, []} == MockAdapter.send(server, message)
+      assert {:ok, [], server} == MockAdapter.send(message, server)
       assert [text: "Hello"] == MockServer.dump_state(server)
     end
 
     test "send when no server", %{connected: server} do
       :ok = GenServer.stop(server, {:shutdown, :stop})
       message = {:text, "Hello"}
-      assert {:error, _state, _events, _reason} = MockAdapter.send(server, message)
+      assert {:error, _state, _events, _reason} = MockAdapter.send(message, server)
     end
   end
 end

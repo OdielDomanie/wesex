@@ -24,62 +24,65 @@ defmodule Wesex.MockAdapter do
   end
 
   @impl true
-  @spec abort(state()) :: {state(), [Wesex.Connection.adapter_event()]}
+  @spec abort(state()) :: {[Wesex.Connection.adapter_event()], state()}
   def abort(state) do
     _ = Process.exit(state, {:shutdown, :abort})
-    {state, []}
+    {[], state}
   end
 
   @impl true
-  @spec local_close(state(), code_reason :: {1000..4999, nil | binary()}) ::
-          {state(), [Wesex.Connection.adapter_event()]}
-  def local_close(state, {code, reason}) do
+  @spec local_close(code_reason :: {1000..4999, nil | binary()}, state()) ::
+          {[Wesex.Connection.adapter_event()], state()}
+  def local_close({code, reason}, state) do
     events = GenServer.call(state, {:close, code, reason})
-    {state, events}
+    {events, state}
   end
 
   @impl true
-  @spec send(state(), message :: {:text | :binary, binary()}) ::
-          {:ok, state(), [Wesex.Connection.adapter_event()]}
-          | {:error, state(), [Wesex.Connection.adapter_event()], reason :: any()}
-  def send(state, message) do
+  @spec send(message :: {:text | :binary, binary()}, state()) ::
+          {:ok, [Wesex.Connection.adapter_event()], state()}
+          | {:error, [Wesex.Connection.adapter_event()], state(), reason :: any()}
+  def send(message, state) do
     if Process.alive?(state) do
       try do
         GenServer.call(state, message)
       rescue
-        _ -> {:error, state, [], :call_failed}
+        _ -> {:error, [], state, :call_failed}
       else
-        events -> {:ok, state, events}
+        events -> {:ok, events, state}
       end
     else
-      {:error, state, [], :process_dead}
+      {:error, [], state, :process_dead}
     end
   end
 
   @impl true
-  @spec send_ping(state()) :: {state(), [Wesex.Connection.adapter_event()]}
+  @spec send_ping(state()) :: {[Wesex.Connection.adapter_event()], state()}
   def send_ping(state) do
     events = GenServer.call(state, {:ping, nil})
-    {state, events}
+    {events, state}
   end
 
   @impl true
-  @spec send_pong(state(), binary()) :: {state(), [Wesex.Connection.adapter_event()]}
-  def send_pong(state, _binary) do
+  @spec send_pong(binary(), state()) :: {[Wesex.Connection.adapter_event()], state()}
+  def send_pong(_binary, state) do
     events = GenServer.call(state, :pong)
-    {state, events}
+    {events, state}
   end
 
   @impl true
-  @spec event(state(), raw_event :: any()) ::
-          {state(), [Wesex.Connection.adapter_event()]} | false
-  def event(state, raw_event) do
+  @spec event(raw_event :: any(), state()) ::
+          {[Wesex.Connection.adapter_event()], state()} | false
+  def event(raw_event, state) do
     case raw_event do
+      :mock_server_connected ->
+        {[:handshake_complete], state}
+
       {:mock_server_messages, messages} ->
-        {state, messages}
+        {messages, state}
 
       {:DOWN, _ref, :process, ^state, _reason} ->
-        {state, [:tcp_close]}
+        {[:tcp_close], state}
 
       _ ->
         false

@@ -48,54 +48,54 @@ defmodule Wesex.MintAdapter do
   end
 
   @impl true
-  @spec send(state, {:text | :binary, binary()}) ::
-          {:ok, state, [Connection.adapter_event()]}
-          | {:error, state, [Connection.adapter_event()], reason :: any}
-  def send(state, msg) do
-    send_frame_result(state, msg)
+  @spec send({:text | :binary, binary()}, state()) ::
+          {:ok, [Connection.adapter_event()], state()}
+          | {:error, [Connection.adapter_event()], state(), reason :: any}
+  def send(msg, state) do
+    send_frame_result(msg, state)
   end
 
   @impl true
-  def local_close(state, {code, reason}) do
-    send_frame(state, {:close, code, reason || ""})
+  def local_close({code, reason}, state) do
+    send_frame({:close, code, reason || ""}, state)
   end
 
   @impl true
   def send_ping(state) do
-    send_frame(state, :ping)
+    send_frame(:ping, state)
   end
 
   @impl true
-  def send_pong(state, data) do
-    send_frame(state, {:pong, data})
+  def send_pong(data, state) do
+    send_frame({:pong, data}, state)
   end
 
-  defp send_frame_result(state(conn: conn, ref: ref, ws: websocket) = state, frame) do
+  defp send_frame_result(frame, state(conn: conn, ref: ref, ws: websocket) = state) do
     {:ok, websocket, data} = Mint.WebSocket.encode(websocket, frame)
 
     case Mint.WebSocket.stream_request_body(conn, ref, data) do
       {:ok, conn} ->
         events = tcp_close_events_if_closed(conn)
-        {:ok, state(state, ws: websocket, conn: conn), events}
+        {:ok, events, state(state, ws: websocket, conn: conn)}
 
       {:error, conn, reason} ->
         events = tcp_close_events_if_closed(conn)
-        {:error, state(state, ws: websocket, conn: conn), events, reason}
+        {:error, events, state(state, ws: websocket, conn: conn), reason}
     end
   end
 
-  defp send_frame(state, frame) do
-    case send_frame_result(state, frame) do
-      {:ok, state, events} -> {state, events}
-      {:error, state, events, _reason} -> {state, events}
+  defp send_frame(frame, state) do
+    case send_frame_result(frame, state) do
+      {:ok, events, state} -> {events, state}
+      {:error, events, state, _reason} -> {events, state}
     end
   end
 
   @impl true
-  @spec abort(state()) :: {state(), [Connection.adapter_event()]}
+  @spec abort(state()) :: {[Connection.adapter_event()], state()}
   def abort(state(conn: conn) = state) do
     {:ok, conn} = Mint.HTTP.close(conn)
-    {state(state, conn: conn), tcp_close_events_if_closed(conn)}
+    {tcp_close_events_if_closed(conn), state(state, conn: conn)}
   end
 
   defp tcp_close_events_if_closed(conn) do
@@ -107,7 +107,7 @@ defmodule Wesex.MintAdapter do
   end
 
   @impl true
-  def event(state(conn: conn) = state, event) do
+  def event(event, state(conn: conn) = state) do
     case Mint.WebSocket.stream(conn, event) do
       :unknown ->
         false
@@ -121,56 +121,57 @@ defmodule Wesex.MintAdapter do
   end
 
   defp do_stream_results(state, conn, resps) do
-    {state, gen_events} = do_resps(state(state, conn: conn), resps)
+    {gen_events, state} = do_resps(resps, state(state, conn: conn))
 
     if Mint.HTTP.open?(conn) do
-      {state, gen_events}
+      {gen_events, state}
     else
-      {state, gen_events ++ [:tcp_close]}
+      {gen_events ++ [:tcp_close], state}
     end
   end
 
-  defp do_resps(state, []), do: {state, []}
+  defp do_resps([], state), do: {[], state}
 
-  defp do_resps(state(conn: _conn, ref: ref, ws: :waiting_status) = state, [
-         {:status, ref, 101} | rest
-       ]) do
+  defp do_resps(
+         [{:status, ref, 101} | rest],
+         state(conn: _conn, ref: ref, ws: :waiting_status) = state
+       ) do
     state = state(state, ws: :waiting_headers)
-    do_resps(state, rest)
+    do_resps(rest, state)
   end
 
   defp do_resps(
-         state(conn: conn, ref: ref, ws: :waiting_status) = state,
-         [{:status, ref, status} | _rest]
+         [{:status, ref, status} | _rest],
+         state(conn: conn, ref: ref, ws: :waiting_status) = state
        )
        when status != 101 do
     conn = Mint.HTTP.close(conn)
-    {state(state, conn: conn), [:tcp_close]}
+    {[:tcp_close], state(state, conn: conn)}
   end
 
-  defp do_resps(state(ref: ref) = state, [{:done, ref} | rest]) do
-    do_resps(state, rest)
+  defp do_resps([{:done, ref} | rest], state(ref: ref) = state) do
+    do_resps(rest, state)
   end
 
   defp do_resps(
-         state(conn: conn, ref: ref, ws: :waiting_headers) = state,
-         [{:headers, ref, resp_headers} | rest]
+         [{:headers, ref, resp_headers} | rest],
+         state(conn: conn, ref: ref, ws: :waiting_headers) = state
        ) do
     {:ok, conn, websocket} = Mint.WebSocket.new(conn, ref, 101, resp_headers)
     state = state(state, ws: websocket, conn: conn)
-    {state, gen_events} = do_resps(state, rest)
-    {state, [:handshake_complete | gen_events]}
+    {gen_events, state} = do_resps(rest, state)
+    {[:handshake_complete | gen_events], state}
   end
 
   defp do_resps(
-         state(ref: ref, ws: websocket) = state,
-         [{:data, ref, data} | rest]
+         [{:data, ref, data} | rest],
+         state(ref: ref, ws: websocket) = state
        ) do
     {:ok, websocket, frames} = Mint.WebSocket.decode(websocket, data)
     ws_events = events_from_frames(frames)
     state = state(state, ws: websocket)
-    {state, gen_events} = do_resps(state, rest)
-    {state, ws_events ++ gen_events}
+    {gen_events, state} = do_resps(rest, state)
+    {ws_events ++ gen_events, state}
   end
 
   defp events_from_frames([]), do: []

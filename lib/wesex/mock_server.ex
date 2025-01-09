@@ -60,6 +60,7 @@ defmodule Wesex.MockServer do
         result when elem(result, 0) in [:ok, :push, :reply] ->
           {:push, messages, websock_state} = normalize_push_result(result)
           state = %{state | websock_state: websock_state, status: :open}
+          Kernel.send(state.send_to, :mock_server_connected)
           Kernel.send(state.send_to, {:mock_server_messages, messages})
 
           {:reply, :ok, state}

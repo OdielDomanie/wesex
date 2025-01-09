@@ -37,9 +37,9 @@ defmodule MockServerWebSockTest do
   defp receive_events(server, timeout \\ 5) do
     receive do
       msg ->
-        case MockAdapter.event(server, msg) do
-          {_state, events} ->
-            receive_events(server, timeout) ++ events
+        case MockAdapter.event(msg, server) do
+          {events, ^server} ->
+            events ++ receive_events(server, timeout)
             # false -> []
         end
     after
@@ -62,15 +62,15 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(InitOKStateWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events} = MockAdapter.send(server, {:text, "OK"})
-      events = events ++ receive_events(server)
+      {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events
 
-      assert events == [{:text, inspect(:init)}]
+      assert events == [:handshake_complete, {:text, inspect(:init)}]
     end
 
     defmodule InitPushStateWebSock do
       use NoopWebSock
-      def init(_opts), do: {:push, {:text, "init"}, :init}
+      def init(_opts), do: {:push, {:text, "init push"}, :init}
       def handle_in(_data, state), do: {:push, {:text, inspect(state)}, state}
     end
 
@@ -79,11 +79,11 @@ defmodule MockServerWebSockTest do
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events0 = receive_events(server)
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events0 ++ events1 ++ receive_events(server)
 
       init = inspect(:init)
-      assert [_, {:text, ^init}] = events
+      assert [:handshake_complete, {:text, "init push"}, {:text, ^init}] = events
     end
 
     defmodule InitReplyStateWebSock do
@@ -97,11 +97,11 @@ defmodule MockServerWebSockTest do
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events0 = receive_events(server)
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events0 ++ events1 ++ receive_events(server)
 
       init = inspect(:init)
-      assert [_, {:text, ^init}] = events
+      assert [_, _, {:text, ^init}] = events
     end
 
     defmodule InitTextWebSock do
@@ -115,7 +115,7 @@ defmodule MockServerWebSockTest do
 
       events = receive_events(server)
 
-      assert [{:text, "TEXT"}] == events
+      assert [:handshake_complete, {:text, "TEXT"}] == events
     end
 
     defmodule InitBinaryWebSock do
@@ -129,7 +129,7 @@ defmodule MockServerWebSockTest do
 
       events = receive_events(server)
 
-      assert [{:binary, "BINARY"}] == events
+      assert [:handshake_complete, {:binary, "BINARY"}] == events
     end
 
     # def init(_opts), do: {:push, {:ping, "PING"}, :init}
@@ -149,7 +149,7 @@ defmodule MockServerWebSockTest do
 
       events = receive_events(server)
 
-      assert [{:binary, "BINARY"}, {:text, "TEXT"}] == events
+      assert [:handshake_complete, {:binary, "BINARY"}, {:text, "TEXT"}] == events
     end
 
     defmodule InitCloseWebSock do
@@ -208,7 +208,7 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(InitCloseWithRestartWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events} = MockAdapter.send(server, {:text, "OK"})
+      {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events ++ receive_events(server)
 
       assert [{:close, 1012, nil}] == events
@@ -269,20 +269,20 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInEchoWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events} = MockAdapter.send(server, {:text, "OK"})
-      events = events ++ receive_events(server)
+      {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events
 
-      assert [{:text, "OK"}] == events
+      assert [_, {:text, "OK"}] = events
     end
 
     test "can receive a binary frame" do
       server = start_mock_server(HandleInEchoWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events} = MockAdapter.send(server, {:binary, "OK"})
-      events = events ++ receive_events(server)
+      {:ok, events, ^server} = MockAdapter.send({:binary, "OK"}, server)
+      events = receive_events(server) ++ events
 
-      assert [{:binary, "OK"}] == events
+      assert [_, {:binary, "OK"}] = events
     end
 
     defmodule HandleInStateWebSock do
@@ -299,23 +299,23 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInStateWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      {:ok, ^server, events2} = MockAdapter.send(server, {:text, "dump"})
-      events = events1 ++ events2 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
+      events = receive_events(server) ++ events1 ++ events2
 
-      assert [{:text, inspect([{"OK", opcode: :text}])}] == events
+      assert [:handshake_complete, {:text, inspect([{"OK", opcode: :text}])}] == events
     end
 
     test "can return a push tuple and update state" do
       server = start_mock_server(HandleInStateWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "dump"})
-      {:ok, ^server, events2} = MockAdapter.send(server, {:text, "dump"})
-      events = events1 ++ events2 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "dump"}, server)
+      {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
+      events = receive_events(server) ++ events1 ++ events2
 
       resp = inspect([{"dump", opcode: :text}])
-      assert [_, {:text, ^resp}] = events
+      assert [_, _, {:text, ^resp}] = events
     end
 
     defmodule HandleInReplyStateWebSock do
@@ -332,12 +332,12 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInReplyStateWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "dump"})
-      {:ok, ^server, events2} = MockAdapter.send(server, {:text, "dump"})
+      {:ok, events1, ^server} = MockAdapter.send({:text, "dump"}, server)
+      {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
       events = events1 ++ events2 ++ receive_events(server)
 
       resp = inspect([{"dump", opcode: :text}])
-      assert [_, {:text, ^resp}] = events
+      assert [_, {:text, ^resp}, _] = events
     end
 
     defmodule HandleInTextWebSock do
@@ -349,10 +349,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInTextWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:text, "TEXT"}] = events
+      assert [_, {:text, "TEXT"}] = events
     end
 
     defmodule HandleInBinaryWebSock do
@@ -364,10 +364,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInBinaryWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:binary, "BINARY"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:binary, "BINARY"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:binary, "BINARY"}] = events
+      assert [_, {:binary, "BINARY"}] = events
     end
 
     # def handle_in(_data, state), do: {:push, {:ping, "PING"}, state}
@@ -383,10 +383,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInListWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events1 ++ receive_events(server)
 
-      assert [{:binary, "BINARY"}, {:text, "TEXT"}] = events
+      assert [{:binary, "BINARY"}, {:text, "TEXT"}, _] = events
     end
 
     defmodule HandleInCloseWebSock do
@@ -398,10 +398,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events1 ++ receive_events(server)
 
-      assert [{:close, 1000, nil}] = events
+      assert [{:close, 1000, nil}, _] = events
     end
 
     # def handle_in(_data, state), do: {:stop, :abnormal, state}
@@ -416,10 +416,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWithCodeWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:close, 5555, nil}] = events
+      assert [_, {:close, 5555, nil}] = events
     end
 
     defmodule HandleInCloseWithCodeAndMessagesWebSock do
@@ -433,10 +433,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWithCodeAndMessagesWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:text, "first"}, {:text, "second"}, {:close, 5555, nil}] = events
+      assert [_, {:text, "first"}, {:text, "second"}, {:close, 5555, nil}] = events
     end
 
     # def handle_in(_data, state), do: {:stop, {:shutdown, :restart}, state}
@@ -451,10 +451,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWithCodeAndNilDetailWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:close, 5555, nil}] = events
+      assert [_, {:close, 5555, nil}] = events
     end
 
     defmodule HandleInCloseWithCodeAndDetailWebSock do
@@ -466,10 +466,9 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWithCodeAndDetailWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
-
-      assert [{:close, 5555, "BOOM"}] = events
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
+      assert [_, {:close, 5555, "BOOM"}] = events
     end
 
     defmodule HandleInCloseWithCodeAndDetailAndMessagesWebSock do
@@ -483,10 +482,10 @@ defmodule MockServerWebSockTest do
       server = start_mock_server(HandleInCloseWithCodeAndDetailAndMessagesWebSock)
       {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
 
-      {:ok, ^server, events1} = MockAdapter.send(server, {:text, "OK"})
-      events = events1 ++ receive_events(server)
+      {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
+      events = receive_events(server) ++ events1
 
-      assert [{:text, "first"}, {:text, "second"}, {:close, 5555, "BOOM"}] = events
+      assert [_, {:text, "first"}, {:text, "second"}, {:close, 5555, "BOOM"}] = events
     end
   end
 
