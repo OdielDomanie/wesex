@@ -158,13 +158,13 @@ defmodule Wesex.Connection do
   """
   @spec send(t, {:text | :binary, binary()}) :: {:ok, t} | {:error, any, t}
   def send(%C{} = con, {type, _data} = msg) when is_msg_type(type) do
-    case con.adapter.send(con.callback_state, msg) do
-      {:ok, adapter_state, new_events} ->
+    case con.adapter.send(msg, con.adapter_state) do
+      {:ok, new_events, adapter_state} ->
         con = %C{con | adapter_state: adapter_state}
         con = do_events(con, new_events)
         {:ok, con}
 
-      {:error, adapter_state, new_events, reason} ->
+      {:error, new_events, adapter_state, reason} ->
         con = %C{con | adapter_state: adapter_state}
         con = do_events(con, new_events)
         {:error, reason, con}
@@ -185,7 +185,7 @@ defmodule Wesex.Connection do
   """
   @spec abort(t) :: t
   def abort(%C{} = con) do
-    {adapter_state, new_events} = con.adapter.abort(con.adapter_state)
+    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
     con = %C{con | adapter_state: adapter_state}
     do_events(con, new_events)
   end
@@ -203,8 +203,8 @@ defmodule Wesex.Connection do
   end
 
   def event(%C{} = connection, event) do
-    case connection.adapter.event(connection.adapter_state, event) do
-      {adapter_state, connection_events} ->
+    case connection.adapter.event(event, connection.adapter_state) do
+      {connection_events, adapter_state} ->
         do_events(%C{connection | adapter_state: adapter_state}, connection_events)
 
       false ->
@@ -260,9 +260,8 @@ defmodule Wesex.Connection do
   end
 
   def do_events(%C{} = con, [{:send_error, _ref, _} = confirm | rest]) do
-    _ = Code.ensure_loaded!(con.callbacks)
-
-    if function_exported?(con.callbacks, :handle_message_sent, 3) do
+    if Code.ensure_loaded?(con.callbacks) and
+         function_exported?(con.callbacks, :handle_message_sent, 3) do
       result = con.callbacks.handle_message_sent(confirm, con.callback_state, short_status(con))
       process_callback_result(result, con, rest)
     else
@@ -272,8 +271,8 @@ defmodule Wesex.Connection do
 
   # get pinged
   def do_events(%C{status: {:open, _}} = con, [{:ping, ping_data} | rest]) do
-    {adapter_state, new_events} =
-      con.adapter.send_pong(con.adapter_state, ping_data)
+    {new_events, adapter_state} =
+      con.adapter.send_pong(ping_data, con.adapter_state)
 
     con = %C{con | adapter_state: adapter_state}
     do_events(con, rest ++ new_events)
@@ -290,7 +289,7 @@ defmodule Wesex.Connection do
 
     ping_timer = Process.send_after(self(), {con.ref, :ping_timer}, @ping_intv)
 
-    {adapter_state, new_events} =
+    {new_events, adapter_state} =
       con.adapter.send_ping(con.adapter_state)
 
     con = %C{
@@ -303,12 +302,12 @@ defmodule Wesex.Connection do
     do_events(con, rest ++ new_events)
   end
 
-  def do_events(%C{status: {:open, :unponged}} = con, [:pong | rest]) do
+  def do_events(%C{status: {:open, :unponged}} = con, [{:pong, _} | rest]) do
     con = %C{con | status: {:open, :ponged}}
     do_events(con, rest)
   end
 
-  def do_events(%C{status: {:open, :ponged}} = con, [:pong | rest]) do
+  def do_events(%C{status: {:open, :ponged}} = con, [{:pong, _} | rest]) do
     do_events(con, rest)
   end
 
@@ -317,8 +316,8 @@ defmodule Wesex.Connection do
     false = Process.cancel_timer(timer)
 
     # 1002: protocol error
-    {adapter_state, new_events} =
-      con.adapter.local_close(con.adapter_state, {1002, "ping timeout"})
+    {new_events, adapter_state} =
+      con.adapter.local_close({1002, "ping timeout"}, con.adapter_state)
 
     close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
 
@@ -332,7 +331,7 @@ defmodule Wesex.Connection do
     do_events(con, rest ++ new_events)
   end
 
-  def do_events(%C{status: :local_closing} = con, [:pong | rest]) do
+  def do_events(%C{status: :local_closing} = con, [{:pong, _} | rest]) do
     do_events(con, rest)
   end
 
@@ -344,7 +343,7 @@ defmodule Wesex.Connection do
 
   # remote close
   def do_events(%C{status: {:open, _}} = con, [{:close, code, reason} | rest]) do
-    {adapter_state, new_events} = con.adapter.local_close(con.adapter_state, {code, nil})
+    {new_events, adapter_state} = con.adapter.local_close({code, nil}, con.adapter_state)
     {timer, :ping_timer} = con.timer
     :ok = cancel_timer(timer, :ping_timer, con.ref)
     close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
@@ -372,7 +371,7 @@ defmodule Wesex.Connection do
       when con.status in [:local_closing, :waiting_tcp_close] do
     # {timer, :close_timeout} = con.timer
     # false = Process.cancel_timer(timer)
-    {adapter_state, new_events} = con.adapter.abort(con.adapter_state)
+    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
 
     con = %C{con | status: :waiting_tcp_close, adapter_state: adapter_state}
     do_events(con, rest ++ new_events)
@@ -419,8 +418,8 @@ defmodule Wesex.Connection do
   end
 
   defp local_close(%C{status: {:open, _}} = con, stop_code, stop_reason) do
-    {adapter_state, new_events} =
-      con.adapter.local_close(con.adapter_state, {stop_code, stop_reason})
+    {new_events, adapter_state} =
+      con.adapter.local_close({stop_code, stop_reason}, con.adapter_state)
 
     {timer, :ping_timer} = con.timer
     :ok = cancel_timer(timer, :ping_timer, con.ref)
@@ -436,14 +435,14 @@ defmodule Wesex.Connection do
   end
 
   defp local_close(%C{status: :remote_closing} = con, stop_code, stop_reason) do
-    {adapter_state, new_events} =
-      con.adapter.local_close(con.adapter_state, {stop_code, stop_reason})
+    {new_events, adapter_state} =
+      con.adapter.local_close({stop_code, stop_reason}, con.adapter_state)
 
     {%C{con | status: :waiting_tcp_close, adapter_state: adapter_state}, new_events}
   end
 
   defp local_close(%C{status: :handshaking} = con, _stop_code, _stop_reason) do
-    {adapter_state, new_events} = con.adapter.abort(con.adapter_state)
+    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
 
     {timer, :handshake_timeout} = con.timer
     :ok = cancel_timer(timer, :handshake_timeout, con.ref)
@@ -466,15 +465,15 @@ defmodule Wesex.Connection do
 
   defp do_replies(%C{status: {:open, _}} = con, [{type, data, ref} | rest])
        when is_msg_type(type) do
-    case con.adapter.send(con.adapter_state, {type, data}) do
-      {:ok, adapter_state, new_events} ->
+    case con.adapter.send({type, data}, con.adapter_state) do
+      {:ok, new_events, adapter_state} ->
         con = %C{con | adapter_state: adapter_state}
         sent_event = {:sent, ref}
         con = do_events(con, [sent_event])
         {con, events} = do_replies(con, rest)
         {con, new_events ++ events}
 
-      {:error, adapter_state, new_events, reason} ->
+      {:error, new_events, adapter_state, reason} ->
         con = %C{con | adapter_state: adapter_state}
         sent_event = {:send_error, ref, reason}
         con = do_events(con, [sent_event])

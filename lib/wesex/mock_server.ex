@@ -117,7 +117,7 @@ defmodule Wesex.MockServer do
     {:reply, [pong: data], state}
   end
 
-  defp handle_msg(:ping, state) when state.status == :closing do
+  defp handle_msg({:ping, _}, state) when state.status == :closing do
     {:reply, [], state}
   end
 

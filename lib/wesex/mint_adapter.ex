@@ -182,8 +182,8 @@ defmodule Wesex.MintAdapter do
     [event | events_from_frames(rest)]
   end
 
-  defp events_from_frames([{:pong, _data} | rest]) do
-    [:pong | events_from_frames(rest)]
+  defp events_from_frames([{:pong, data} | rest]) do
+    [{:pong, data} | events_from_frames(rest)]
   end
 
   defp events_from_frames([{:close, code, data} | rest]) do

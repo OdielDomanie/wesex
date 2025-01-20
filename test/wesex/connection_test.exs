@@ -44,37 +44,37 @@ defmodule Wesex.ConnectionTest do
     end
 
     @impl true
-    def event(_state, _raw_event) do
+    def event(_raw_event, _state) do
       raise "not implemented"
     end
 
     @impl true
-    def send(state, {:text, "reply 2 bad"} = msg) do
-      {:error, [{:sent, msg} | state], [], :mock_reason}
+    def send({:text, "reply 2 bad"} = msg, state) do
+      {:error, [], [{:sent, msg} | state], :mock_reason}
     end
 
-    def send(state, msg) do
-      {:ok, [{:sent, msg} | state], []}
+    def send(msg, state) do
+      {:ok, [], [{:sent, msg} | state]}
     end
 
     @impl true
     def abort(state) do
-      {[:tcp_closed | state], [:tcp_close]}
+      {[:tcp_close], [:tcp_closed | state]}
     end
 
     @impl true
     def send_ping(state) do
-      {[:sent_ping | state], []}
+      {[], [:sent_ping | state]}
     end
 
     @impl true
-    def send_pong(state, data) do
-      {[{:sent_pong, data} | state], []}
+    def send_pong(data, state) do
+      {[], [{:sent_pong, data} | state]}
     end
 
     @impl true
-    def local_close(state, {code, reason}) do
-      {[{:sent_close, code, reason} | state], []}
+    def local_close({code, reason}, state) do
+      {[], [{:sent_close, code, reason} | state]}
     end
   end
 
@@ -151,7 +151,8 @@ defmodule Wesex.ConnectionTest do
              )
 
     assert connection.status == {:open, :unponged}
-    assert connection.callback_state == []
+    # no message confirm with send/2
+    # assert connection.callback_state == [{:message_confirm, {:binary, "foo"}, :open}]
     assert connection.adapter_state == [{:sent, {:binary, "foo"}}]
   end
 
@@ -265,7 +266,7 @@ defmodule Wesex.ConnectionTest do
         |> add_timer(:ping_timer)
 
       timer = connection.timer
-      connection = Connection.do_events(connection, [:pong])
+      connection = Connection.do_events(connection, pong: nil)
       assert connection.status == {:open, :ponged}
       assert connection.timer == timer
       assert connection.callback_state == []
@@ -278,7 +279,7 @@ defmodule Wesex.ConnectionTest do
         |> add_timer(:ping_timer)
 
       timer = connection.timer
-      connection = Connection.do_events(connection, [:pong])
+      connection = Connection.do_events(connection, pong: nil)
       assert connection.status == {:open, :ponged}
       assert connection.timer == timer
       assert connection.callback_state == []
@@ -413,7 +414,7 @@ defmodule Wesex.ConnectionTest do
 
     test "ignores pong event in local_closing state", %{connection: connection} do
       connection = %Connection{connection | status: :local_closing}
-      connection = Connection.do_events(connection, [:pong])
+      connection = Connection.do_events(connection, pong: nil)
       assert connection.status == :local_closing
       assert connection.adapter_state == []
     end
