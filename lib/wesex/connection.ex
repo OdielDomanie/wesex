@@ -385,7 +385,7 @@ defmodule Wesex.Connection do
     {timer, timer_type} = con.timer
     :ok = cancel_timer(timer, timer_type, con.ref)
 
-    %C{con | status: :closed, timer: nil}
+    %C{con | status: :closed, timer: nil, remote_stop_code_reason: {nil, nil}}
   end
 
   defp cancel_timer(timer, timer_msg, ref) when is_reference(ref) do

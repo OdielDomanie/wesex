@@ -1,6 +1,11 @@
 defmodule Wesex.MintAdapter do
   @moduledoc """
   `Wesex.Adapter` implementation that uses the `Mint.WebSocket` library.
+
+  ## Adapter options
+  * `conn` — Options given to `Mint.HTTP.connect/4`
+  * `ws` — Options given to `Mint.WebSocket.upgrade/5`
+
   """
   alias Wesex.{Adapter, Connection}
   import Record
@@ -24,7 +29,11 @@ defmodule Wesex.MintAdapter do
         "wss" -> :https
       end
 
-    ws_scheme = String.to_existing_atom(url.scheme)
+    ws_scheme =
+      case url.scheme do
+        "ws" -> :ws
+        "wss" -> :wss
+      end
 
     %URI{userinfo: nil, host: host, port: port} = url
 

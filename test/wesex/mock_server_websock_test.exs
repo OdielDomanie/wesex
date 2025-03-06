@@ -60,7 +60,7 @@ defmodule MockServerWebSockTest do
 
     test "can return an ok tuple and update state" do
       server = start_mock_server(InitOKStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events
@@ -76,7 +76,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a push tuple and update state" do
       server = start_mock_server(InitPushStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events0 = receive_events(server)
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
@@ -94,7 +94,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a reply tuple and update state" do
       server = start_mock_server(InitReplyStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events0 = receive_events(server)
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
@@ -111,7 +111,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a text frame" do
       server = start_mock_server(InitTextWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -125,7 +125,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a binary frame" do
       server = start_mock_server(InitBinaryWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -145,7 +145,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a list of frames" do
       server = start_mock_server(InitListWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -159,7 +159,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple" do
       server = start_mock_server(InitCloseWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -176,7 +176,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code" do
       server = start_mock_server(InitCloseWithCodeWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -191,7 +191,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and messages" do
       server = start_mock_server(InitCloseWithCodeAndMessagesWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -206,7 +206,7 @@ defmodule MockServerWebSockTest do
     @tag skip: true
     test "can close a connection by returning an {:shutdown, :restart} tuple" do
       server = start_mock_server(InitCloseWithRestartWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events ++ receive_events(server)
@@ -221,7 +221,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and nil detail" do
       server = start_mock_server(InitCloseWithCodeAndNilDetailWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -235,7 +235,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and detail" do
       server = start_mock_server(InitCloseWithCodeAndDetailWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -251,7 +251,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and detail and messages" do
       server = start_mock_server(InitCloseWithCodeAndDetailAndMessagesWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       events = receive_events(server)
 
@@ -267,7 +267,7 @@ defmodule MockServerWebSockTest do
 
     test "can receive a text frame" do
       server = start_mock_server(HandleInEchoWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events
@@ -277,7 +277,7 @@ defmodule MockServerWebSockTest do
 
     test "can receive a binary frame" do
       server = start_mock_server(HandleInEchoWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events, ^server} = MockAdapter.send({:binary, "OK"}, server)
       events = receive_events(server) ++ events
@@ -297,7 +297,7 @@ defmodule MockServerWebSockTest do
 
     test "can return an ok tuple and update state" do
       server = start_mock_server(HandleInStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
@@ -308,7 +308,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a push tuple and update state" do
       server = start_mock_server(HandleInStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "dump"}, server)
       {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
@@ -330,7 +330,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a reply tuple and update state" do
       server = start_mock_server(HandleInReplyStateWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "dump"}, server)
       {:ok, events2, ^server} = MockAdapter.send({:text, "dump"}, server)
@@ -347,7 +347,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a text frame" do
       server = start_mock_server(HandleInTextWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
@@ -362,7 +362,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a binary frame" do
       server = start_mock_server(HandleInBinaryWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:binary, "BINARY"}, server)
       events = receive_events(server) ++ events1
@@ -381,7 +381,7 @@ defmodule MockServerWebSockTest do
 
     test "can return a list of frames" do
       server = start_mock_server(HandleInListWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events1 ++ receive_events(server)
@@ -396,7 +396,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple" do
       server = start_mock_server(HandleInCloseWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = events1 ++ receive_events(server)
@@ -414,7 +414,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code" do
       server = start_mock_server(HandleInCloseWithCodeWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
@@ -431,7 +431,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and messages" do
       server = start_mock_server(HandleInCloseWithCodeAndMessagesWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
@@ -449,7 +449,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and nil detail" do
       server = start_mock_server(HandleInCloseWithCodeAndNilDetailWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
@@ -464,7 +464,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and detail" do
       server = start_mock_server(HandleInCloseWithCodeAndDetailWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
@@ -480,7 +480,7 @@ defmodule MockServerWebSockTest do
 
     test "can close a connection by returning a stop tuple with a code and detail and messages" do
       server = start_mock_server(HandleInCloseWithCodeAndDetailAndMessagesWebSock)
-      {:ok, ^server} = MockAdapter.connect(@mock_uri, [], server: server)
+      {:ok, server} = MockAdapter.connect(@mock_uri, [], server: server)
 
       {:ok, events1, ^server} = MockAdapter.send({:text, "OK"}, server)
       events = receive_events(server) ++ events1
