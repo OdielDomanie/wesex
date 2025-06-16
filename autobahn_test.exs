@@ -1,7 +1,8 @@
 defmodule AutobahnTest do
   alias Wesex.Connection
-  use Wesex
-  @behaviour Connection
+  # use Wesex
+
+  use GenServer
 
   # Fails 6.4.3 and 6.4.4 when we send a ping first
   # Maybe a mint_web_socket bug?
@@ -11,20 +12,56 @@ defmodule AutobahnTest do
     GenServer.start_link(__MODULE__, wesex_opts, genserver_opts)
   end
 
+  # @impl GenServer
+  # def init(init_arg) do
+  #   super([{:callbacks, __MODULE__}, {:cb_state, nil} | init_arg])
+  # end
+
   @impl GenServer
-  def init(init_arg) do
-    super([{:callbacks, __MODULE__}, {:cb_state, nil} | init_arg])
+  def init(url: url) do
+    {:ok, %{url: url, conn: nil}, {:continue, :connect}}
   end
 
-  @impl Connection
-  def handle_connected(state) do
-    {:ok, state, []}
+  @impl GenServer
+  def handle_continue(:connect, state) do
+    {:ok, conn} = Connection.connect(state.url)
+    {:noreply, %{state | conn: conn}}
   end
 
-  @impl Connection
-  def handle_in({type, data}, state, _status) do
-    {:ok, state, [{type, data, make_ref()}]}
+  @impl GenServer
+  def handle_info(info, state) do
+    {events, c} = Connection.event(state.conn, info)
+    do_events(%{state | conn: c}, events)
   end
+
+  defp do_events(state, []), do: {:noreply, state}
+
+  defp do_events(state, [{:received, msg} | rest]) do
+    {_, results, c} = Wesex.Connection.send(state.conn, msg)
+    do_events(%{state | conn: c}, rest ++ results)
+  end
+
+  defp do_events(state, [:open | rest]) do
+    do_events(state, rest)
+  end
+
+  defp do_events(state, [{:closing, _} | rest]) do
+    do_events(state, rest)
+  end
+
+  defp do_events(state, [{:closed, _} | _rest]) do
+    {:stop, :normal, state}
+  end
+
+  # @impl Connection
+  # def handle_connected(state) do
+  #   {:ok, state, []}
+  # end
+
+  # @impl Connection
+  # def handle_in({type, data}, state, _status) do
+  #   {:ok, state, [{type, data, make_ref()}]}
+  # end
 
   def run(from, to) do
     Task.async_stream(

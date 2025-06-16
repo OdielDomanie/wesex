@@ -22,16 +22,14 @@ defmodule Wesex.Connection do
   ```
   """
 
-  alias __MODULE__, as: C
   alias Wesex.MintAdapter
+  alias __MODULE__, as: C
+  @type adapter :: module()
 
-  @handshake_timeout 4_000
-  @ping_intv 10_000
-  @close_timeout 4_000
-
-  @type t :: %C{
-          callbacks: module(),
-          callback_state: any(),
+  @typedoc """
+  Connection struct.
+  """
+  @type t :: %__MODULE__{
           status:
             :handshaking
             | {:open, :ponged | :unponged}
@@ -45,45 +43,49 @@ defmodule Wesex.Connection do
           remote_stop_code_reason: nil | stop_code_reason()
         }
 
+  @type input_event :: adapter_event | {reference, :wesex_timer, timer_type}
+
+  # * `{:sent, reference} — The message was sent successfully. (see `send/3`)
+  # * `{:send_error, reference, reason}` —
+  #       The message could not be sent successfully. (see `send/3`)
+  @typedoc """
+  Results from the functions in this module.
+  * `:open` — The handshake is complete and the connection is open.
+  * `{:received, msg}` — Message received.
+  * `{:closing, reason}` — The connection is closing.
+        If it closing handshake is local initiated,
+        the stop code & reason is the one the client has sent.
+        If it is remote initiated, it stop code & reason is what the
+        server has sent.
+  * `{:closed, reason}` — The TCP connection is closed.
+        If the closing handshake was successful,
+        the reason is `{:remote, stop_code_reason()}`
+        If the connection is closed without a complete closing handshake,
+        it will be `{:error, reason}`. In that case `{:closing, _}` event
+        may never be emitted.
+  """
+  @type result_event ::
+          :open
+          | {:received, {:text | :binary, binary()}}
+          # | {:sent, term()}
+          # | {:send_error, term(), reason :: any}
+          | {:closing, {:local, stop_code_reason()} | {:remote, stop_code_reason()}}
+          | {:closed,
+             {:remote, stop_code_reason()}
+             | {:error, :timeout | :aborted | :closed_in_handshake | :unexpected_tcp_close}}
+
+  @type adapter_event :: term()
+  # :handshake_complete
+  # | {:ping | :pong, nil | binary()}
+  # | {:text | :binary, binary()}
+  # | {:close, 1000..4999 | nil, binary() | nil}
+  # | :tcp_close
+
   @type stop_code_reason :: {1000..4999 | nil, binary() | nil}
   @type timer_type :: :handshake_timeout | :ping_timer | :close_timeout
 
-  @opaque event ::
-            adapter_event()
-            | {reference(), timer_type()}
-            | {:sent, reference()}
-            | {:send_error, reference(), reason :: any}
-
-  @type adapter_event ::
-          :handshake_complete
-          | {:ping | :pong, nil | binary()}
-          | {:text | :binary, binary()}
-          | {:close, 1000..4999 | nil, binary() | nil}
-          | :tcp_close
-
-  @type callback_return ::
-          {:ok, callback_state :: any, replies :: [{:text | :binary, binary(), reference()}]}
-          | {{:stop, 1000..4999, nil | binary()}, callback_state :: any,
-             replies :: [{:text | :binary, binary(), reference()}]}
-
-  @callback handle_connected(callback_state :: any) :: callback_return()
-  @callback handle_in(
-              message :: {:text | :binary, binary()},
-              callback_state :: any,
-              :open | :closing
-            ) ::
-              callback_return()
-  @callback handle_message_sent(
-              {:sent, reference()} | {:send_error, reference(), reason :: any},
-              callback_state :: any,
-              :open | :closing
-            ) :: callback_return()
-  @optional_callbacks [handle_message_sent: 3]
-
-  @enforce_keys [:callbacks, :callback_state, :status, :adapter, :adapter_state, :ref]
+  @enforce_keys [:status, :adapter, :adapter_state, :ref]
   defstruct [
-    :callbacks,
-    :callback_state,
     :status,
     :adapter,
     :adapter_state,
@@ -92,13 +94,80 @@ defmodule Wesex.Connection do
     :remote_stop_code_reason
   ]
 
-  defguardp is_msg_type(type) when type == :text or type == :binary
+  @handshake_timeout 4_000
+  @close_timeout 4_000
+  @ping_intv 10_000
 
   @doc """
-  The status of the connection, as one of `:handshaking`, `:open`, `:closing`, or `:closed`
+  Starts a websocket connection.
+
+  Returns a connection in the handshaking stage.
+  Returns the error from `adapter.connect/3` as is.
   """
-  @spec short_status(t) :: :handshaking | :open | :closing | :closed
-  def short_status(%C{status: status}) do
+  @spec connect(URI.t() | String.t(), [{String.t(), String.t()}], adapter(), keyword()) ::
+          {:ok, t} | {:error, term}
+  def connect(url, headers \\ [], adapter \\ MintAdapter, adapter_opts \\ []) do
+    do_connect(url, headers, adapter, adapter_opts)
+  end
+
+  @doc """
+  Takes adapter's events, modifying the state and outputting result events.
+
+  Returns false if the event does not belong to this connection.
+  """
+  @spec event(t, input_event) :: {[result_event], t} | false
+  def event(connection, input_event) do
+    do_event(connection, input_event)
+  end
+
+  @doc """
+  Sends a message.
+
+  The returned error reason is from `adapter.send/2`.
+  """
+  @spec send(t, {:text | :binary, String.t()}) :: {:ok | {:error, term()}, [result_event], t}
+  def send(conn, message) do
+    do_send(conn, message)
+  end
+
+  # @doc """
+  # Tries sending a message.
+
+  # Any term can be given as a reference for the message.
+  # A result event of `{:sent, reference}` or `{:send_error, reference, reason}`
+  # will be emitted as a result of this function or from a future function call that
+  # returns result events, with the `reference` as the same value givent to this function.
+  # """
+  # @spec send(t, {:text | :binary, binary()}, term()) :: {[result_event], t}
+  # def send(conn, message, reference \\ make_ref()) do
+  #   do_send(conn, message, reference)
+  # end
+
+  @doc """
+  Starts the closing handshake.
+
+  This function has no effect if the connection is already
+  in a closing or closed state. If the connection is in handshaking state,
+  it is aborted instead (no closing handshake is sent).
+  """
+  @spec close(t, stop_code_reason()) :: {[result_event()], t}
+  def close(conn, code_reason) do
+    do_close(conn, code_reason)
+  end
+
+  @doc """
+  Closes the TCP connection without handshake.
+  """
+  @spec abort(t) :: {[result_event()], t}
+  def abort(conn) do
+    do_abort(conn)
+  end
+
+  @doc """
+  Short status of the connection.
+  """
+  @spec status(t) :: :handshaking | :open | :closing | :closed
+  def status(%C{status: status} = _conn) do
     case status do
       :handshaking -> :handshaking
       {:open, _} -> :open
@@ -108,378 +177,247 @@ defmodule Wesex.Connection do
     end
   end
 
-  @doc """
-  Starts a websocket connection.
+  # Inline to simplify stack trace bc. we use the header pattern.
+  @compile {:inline, do_connect: 4, do_event: 2, do_close: 2}
 
-  Returns a connection in the handshaking stage.
-  """
-  @spec connect(
-          module(),
-          {module(), any()},
-          String.t() | URI.t(),
-          [{String.t(), String.t()}],
-          Keyword.t()
-        ) :: {:ok, t} | {:error, any()}
-  def connect(
-        adapter \\ MintAdapter,
-        {callbacks, callback_state} = _callback_and_state,
-        url,
-        headers,
-        adapter_opts
-      ) do
-    url = URI.new!(url)
+  defp do_connect(url, headers, adapter, adapter_opts) do
+    uri = URI.new!(url)
 
-    case adapter.connect(url, headers, adapter_opts) do
+    case adapter.connect(uri, headers, adapter_opts) do
       {:ok, adapter_state} ->
         ref = make_ref()
+        handshake_timeout = timer(ref, :handshake_timeout, @handshake_timeout)
 
-        handshake_timeout =
-          Process.send_after(self(), {ref, :handshake_timeout}, @handshake_timeout)
-
-        con = %C{
+        conn = %C{
           adapter: adapter,
           adapter_state: adapter_state,
-          callback_state: callback_state,
-          callbacks: callbacks,
           ref: ref,
           status: :handshaking,
-          timer: {handshake_timeout, :handshake_timeout}
+          timer: {:handshake_timeout, handshake_timeout}
         }
 
-        {:ok, con}
+        {:ok, conn}
 
-      {:error, reason} ->
-        {:error, reason}
+      {:error, r} ->
+        {:error, r}
     end
   end
 
-  @doc """
-  Sends a websocket message.
-  """
-  @spec send(t, {:text | :binary, binary()}) :: {:ok, t} | {:error, any, t}
-  def send(%C{} = con, {type, _data} = msg) when is_msg_type(type) do
-    case con.adapter.send(msg, con.adapter_state) do
-      {:ok, new_events, adapter_state} ->
-        con = %C{con | adapter_state: adapter_state}
-        con = do_events(con, new_events)
-        {:ok, con}
+  defp do_event(%C{status: :closed}, _), do: false
 
-      {:error, new_events, adapter_state, reason} ->
-        con = %C{con | adapter_state: adapter_state}
-        con = do_events(con, new_events)
-        {:error, reason, con}
+  defp do_event(%C{ref: ref, status: status} = c, {ref, :wesex_timer, timer_type}) do
+    case {status, timer_type} do
+      {:handshaking, :handshake_timeout} ->
+        {[:tcp_close], adapter_state} = c.adapter.abort(c.adapter_state)
+        c = %{c | adapter_state: adapter_state, status: :closed, timer: nil}
+        {[closed: {:error, :closed_in_handshake}], c}
+
+      {{:open, :ponged}, :ping_timer} ->
+        {adp_results, adp_state} = c.adapter.send_ping(c.adapter_state)
+        timer = timer(c.ref, :ping_timer, @ping_intv)
+
+        c = %{
+          c
+          | adapter_state: adp_state,
+            status: {:open, :unponged},
+            timer: {:ping_timer, timer}
+        }
+
+        do_adapter_results(c, adp_results)
+
+      {{:open, :unponged}, :ping_timer} ->
+        # 1002: protocol error
+        {adp_results, adp_state} = c.adapter.local_close({1002, "ping timeout"}, c.adapter_state)
+        timer = timer(c.ref, :close_timeout, @close_timeout)
+
+        c = %{
+          c
+          | status: :local_closing,
+            adapter_state: adp_state,
+            timer: {:close_timeout, timer}
+        }
+
+        {results, c} = do_adapter_results(c, adp_results)
+        {[{:closing, {:local, {1002, "ping timeout"}}} | results], c}
+
+      {status, :close_timeout} when status in [:local_closing, :waiting_tcp_close] ->
+        {[:tcp_close], adp_state} = c.adapter.abort(c.adapter_state)
+        c = %{c | status: :closed, adapter_state: adp_state, timer: nil}
+        {[closed: {:error, :timeout}], c}
     end
   end
 
-  @doc """
-  Starts the closing process (eg. the closing handshake).
-  """
-  @spec close(t, 1000..4999, nil | binary()) :: t
-  def close(%C{} = con, stop_code, stop_reason \\ nil) do
-    {con, new_events} = local_close(con, stop_code, stop_reason)
-    do_events(con, new_events)
-  end
-
-  @doc """
-  Closes the connection abruptly.
-  """
-  @spec abort(t) :: t
-  def abort(%C{} = con) do
-    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
-    con = %C{con | adapter_state: adapter_state}
-    do_events(con, new_events)
-  end
-
-  @doc """
-  Feeds a received event.
-
-  This will alter the connection struct and may call the callbacks.
-  """
-  @spec event(t, event) :: t | false
-  def event(connection, event)
-
-  def event(%C{ref: ref} = con, {ref, timer_msg}) do
-    do_events(con, [timer_msg])
-  end
-
-  def event(%C{} = connection, event) do
-    case connection.adapter.event(event, connection.adapter_state) do
-      {connection_events, adapter_state} ->
-        do_events(%C{connection | adapter_state: adapter_state}, connection_events)
+  defp do_event(%C{} = c, input_event) do
+    case c.adapter.event(input_event, c.adapter_state) do
+      {adapter_results, adapter_state} ->
+        c = %{c | adapter_state: adapter_state}
+        do_adapter_results(c, adapter_results)
 
       false ->
         false
     end
   end
 
-  @doc false
-  @spec do_events(t, [event()]) :: t
-  def do_events(%C{} = connection, []), do: connection
+  defguardp is_msg_type(type) when type in [:text, :binary]
 
-  # connected
-  def do_events(%C{status: :handshaking} = con, [:handshake_complete | rest]) do
-    # User callback
-    result = con.callbacks.handle_connected(con.callback_state)
-    # Cancel previous timer
-    {timer, :handshake_timeout} = con.timer
-    :ok = cancel_timer(timer, :handshake_timeout, con.ref)
-    # Start the ping timer
-    ping_timer = Process.send_after(self(), {con.ref, :ping_timer}, 0)
-    con = %C{con | status: {:open, :ponged}, timer: {ping_timer, :ping_timer}}
+  defp do_send(%C{} = c, msg) do
+    case c.adapter.send(msg, c.adapter_state) do
+      {:ok, adp_results, adp_state} ->
+        c = %{c | adapter_state: adp_state}
+        {results, c} = do_adapter_results(c, adp_results)
+        {:ok, results, c}
 
-    process_callback_result(result, con, rest)
-  end
-
-  def do_events(%C{status: :handshaking} = con, [:handshake_timeout | rest]) do
-    {con, new_events} = local_close(con, nil, nil)
-    do_events(con, rest ++ new_events)
-  end
-
-  # message
-  def do_events(%C{status: {:open, _}} = con, [{type, _data} = msg | rest])
-      when is_msg_type(type) do
-    result = con.callbacks.handle_in(msg, con.callback_state, :open)
-    process_callback_result(result, con, rest)
-  end
-
-  def do_events(%C{status: :local_closing} = con, [{type, _data} = msg | rest])
-      when is_msg_type(type) do
-    result = con.callbacks.handle_in(msg, con.callback_state, :closing)
-    process_callback_result(result, con, rest)
-  end
-
-  # message confirmation
-  def do_events(%C{} = con, [{:sent, _ref} = confirm | rest]) do
-    if Code.ensure_loaded?(con.callbacks) and
-         function_exported?(con.callbacks, :handle_message_sent, 3) do
-      result = con.callbacks.handle_message_sent(confirm, con.callback_state, short_status(con))
-      process_callback_result(result, con, rest)
-    else
-      do_events(con, rest)
+      {:error, adp_results, adp_state, reason} ->
+        c = %{c | adapter_state: adp_state}
+        {results, c} = do_adapter_results(c, adp_results)
+        {{:error, reason}, results, c}
     end
   end
 
-  def do_events(%C{} = con, [{:send_error, _ref, _} = confirm | rest]) do
-    if Code.ensure_loaded?(con.callbacks) and
-         function_exported?(con.callbacks, :handle_message_sent, 3) do
-      result = con.callbacks.handle_message_sent(confirm, con.callback_state, short_status(con))
-      process_callback_result(result, con, rest)
-    else
-      do_events(con, rest)
-    end
+  defp do_close(%C{status: {:open, _}} = c, code_reason) do
+    cancel_timer(c.timer)
+    {adp_results, adp_state} = c.adapter.local_close(code_reason, c.adapter_state)
+    c = %{c | adapter_state: adp_state, status: :local_closing, timer: nil}
+    {next_results, c} = do_adapter_results(c, adp_results)
+    {[{:closing, {:local, code_reason}} | next_results], c}
   end
+
+  defp do_close(%C{status: status} = c, _code_reason)
+       when status == :local_closing
+       when status == :waiting_tcp_close
+       when status == :closed do
+    {[], c}
+  end
+
+  defp do_close(%C{status: :handshaking} = c, _code_reason) do
+    do_abort(c)
+  end
+
+  defp do_abort(%C{} = c) do
+    c.timer && cancel_timer(c.timer)
+    {adp_results, adp_state} = c.adapter.abort(c.adapter_state)
+    c = %{c | adapter_state: adp_state, timer: nil}
+    do_adapter_results(c, adp_results)
+  end
+
+  defp do_adapter_results(%C{} = c, []) do
+    {[], c}
+  end
+
+  defp do_adapter_results(%C{status: :handshaking} = c, [:handshake_complete | rest]) do
+    cancel_timer(c.timer)
+    ping_timer = timer(c.ref, :ping_timer, 0)
+    c = %{c | status: {:open, :ponged}, timer: {:ping_timer, ping_timer}}
+    {results_rest, c} = do_adapter_results(c, rest)
+    {[:open | results_rest], c}
+  end
+
+  # receive message
+  defp do_adapter_results(%C{status: {:open, _}} = c, [{type, _data} = msg | rest])
+       when is_msg_type(type) do
+    {next_results, c} = do_adapter_results(c, rest)
+    {[{:received, msg} | next_results], c}
+  end
+
+  defp do_adapter_results(%C{status: :local_closing} = c, [{type, _data} = msg | rest])
+       when is_msg_type(type) do
+    {next_results, c} = do_adapter_results(c, rest)
+    {[{:received, msg} | next_results], c}
+  end
+
+  # # message confirmation
+  # defp do_adapter_results(%C{} = c, [{:sent, ref} | rest]) do
+  #   {next_results, c} = do_adapter_results(c, rest)
+  #   {[{:sent, ref} | next_results], c}
+  # end
+
+  # defp do_adapter_results(%C{} = c, [{:send_error, ref, reason} | rest]) do
+  #   {next_results, c} = do_adapter_results(c, rest)
+  #   {[{:send_error, ref, reason} | next_results], c}
+  # end
 
   # get pinged
-  def do_events(%C{status: {:open, _}} = con, [{:ping, ping_data} | rest]) do
-    {new_events, adapter_state} =
-      con.adapter.send_pong(ping_data, con.adapter_state)
-
-    con = %C{con | adapter_state: adapter_state}
-    do_events(con, rest ++ new_events)
+  defp do_adapter_results(%C{status: {:open, _}} = c, [{:ping, ping_data} | rest]) do
+    {adp_results_new, adp_state} = c.adapter.send_pong(ping_data, c.adapter_state)
+    c = %{c | adapter_state: adp_state}
+    do_adapter_results(c, rest ++ adp_results_new)
   end
 
-  def do_events(%C{status: :local_closing} = con, [{:ping, _ping_data} | rest]) do
-    do_events(con, rest)
+  defp do_adapter_results(%C{status: :local_closing} = c, [{:ping, _ping_data} | rest]) do
+    do_adapter_results(c, rest)
   end
 
-  # ping-pong
-  def do_events(%C{status: {:open, :ponged}} = con, [:ping_timer | rest]) do
-    {timer, :ping_timer} = con.timer
-    false = Process.cancel_timer(timer)
-
-    ping_timer = Process.send_after(self(), {con.ref, :ping_timer}, @ping_intv)
-
-    {new_events, adapter_state} =
-      con.adapter.send_ping(con.adapter_state)
-
-    con = %C{
-      con
-      | timer: {ping_timer, :ping_timer},
-        status: {:open, :unponged},
-        adapter_state: adapter_state
-    }
-
-    do_events(con, rest ++ new_events)
+  # get ponged
+  defp do_adapter_results(%C{status: {:open, :unponged}} = c, [{:pong, _} | rest]) do
+    c = %{c | status: {:open, :ponged}}
+    do_adapter_results(c, rest)
   end
 
-  def do_events(%C{status: {:open, :unponged}} = con, [{:pong, _} | rest]) do
-    con = %C{con | status: {:open, :ponged}}
-    do_events(con, rest)
+  defp do_adapter_results(%C{status: {:open, :ponged}} = c, [{:pong, _} | rest]) do
+    do_adapter_results(c, rest)
   end
 
-  def do_events(%C{status: {:open, :ponged}} = con, [{:pong, _} | rest]) do
-    do_events(con, rest)
-  end
-
-  def do_events(%C{status: {:open, :unponged}} = con, [:ping_timer | rest]) do
-    {timer, :ping_timer} = con.timer
-    false = Process.cancel_timer(timer)
-
-    # 1002: protocol error
-    {new_events, adapter_state} =
-      con.adapter.local_close({1002, "ping timeout"}, con.adapter_state)
-
-    close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
-
-    con = %C{
-      con
-      | status: :local_closing,
-        adapter_state: adapter_state,
-        timer: {close_timeout, :close_timeout}
-    }
-
-    do_events(con, rest ++ new_events)
-  end
-
-  def do_events(%C{status: :local_closing} = con, [{:pong, _} | rest]) do
-    do_events(con, rest)
+  defp do_adapter_results(%C{status: :local_closing} = c, [{:pong, _} | rest]) do
+    do_adapter_results(c, rest)
   end
 
   # close response
-  def do_events(%C{status: :local_closing} = con, [{:close, code, reason} | rest]) do
-    con = %C{con | status: :waiting_tcp_close, remote_stop_code_reason: {code, reason}}
-    do_events(con, rest)
+  defp do_adapter_results(%C{status: :local_closing} = c, [{:close, code, reason} | rest]) do
+    c = %{c | status: :waiting_tcp_close, remote_stop_code_reason: {code, reason}}
+    do_adapter_results(c, rest)
   end
 
   # remote close
-  def do_events(%C{status: {:open, _}} = con, [{:close, code, reason} | rest]) do
-    {new_events, adapter_state} = con.adapter.local_close({code, nil}, con.adapter_state)
-    {timer, :ping_timer} = con.timer
-    :ok = cancel_timer(timer, :ping_timer, con.ref)
-    close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
+  defp do_adapter_results(%C{status: {:open, _}} = c, [{:close, code, reason} | rest]) do
+    {adp_results_new, adp_state} = c.adapter.local_close({code, nil}, c.adapter_state)
+    cancel_timer(c.timer)
+    close_timeout = timer(c.ref, :ping_timer, @close_timeout)
 
-    con = %C{
-      con
+    c = %{
+      c
       | status: :waiting_tcp_close,
         remote_stop_code_reason: {code, reason},
-        adapter_state: adapter_state,
-        timer: {close_timeout, :close_timeout}
+        adapter_state: adp_state,
+        timer: {:close_timeout, close_timeout}
     }
 
-    do_events(con, rest ++ new_events)
+    {next_results, c} = do_adapter_results(c, rest ++ adp_results_new)
+    {[{:closing, {:remote, {code, reason}}} | next_results], c}
   end
 
   # tcp close
-  def do_events(%C{status: :waiting_tcp_close} = con, [:tcp_close | _rest]) do
-    {timer, :close_timeout} = con.timer
-    :ok = cancel_timer(timer, :close_timeout, con.ref)
-    %C{con | status: :closed, timer: nil}
-  end
+  defp do_adapter_results(%C{status: :waiting_tcp_close} = c, [:tcp_close | rest]) do
+    cancel_timer(c.timer)
+    c = %{c | status: :closed, timer: nil}
 
-  # close timeout
-  def do_events(%C{} = con, [:close_timeout | rest])
-      when con.status in [:local_closing, :waiting_tcp_close] do
-    # {timer, :close_timeout} = con.timer
-    # false = Process.cancel_timer(timer)
-    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
-
-    con = %C{con | status: :waiting_tcp_close, adapter_state: adapter_state}
-    do_events(con, rest ++ new_events)
+    {next_results, c} = do_adapter_results(c, rest)
+    {[{:closed, {:remote, c.remote_stop_code_reason}} | next_results], c}
   end
 
   # unexpected tcp close
-  def do_events(%C{} = con, [:tcp_close | _rest])
-      when con.status == :handshaking
-      when elem(con.status, 0) == :open
-      when con.status == :local_closing do
-    {timer, timer_type} = con.timer
-    :ok = cancel_timer(timer, timer_type, con.ref)
+  defp do_adapter_results(%C{} = c, [:tcp_close | rest])
+       when c.status == :handshaking
+       when elem(c.status, 0) == :open
+       when c.status == :local_closing do
+    cancel_timer(c.timer)
 
-    %C{con | status: :closed, timer: nil, remote_stop_code_reason: {nil, nil}}
+    c = %{c | status: :closed, timer: nil}
+
+    {next_results, c} = do_adapter_results(c, rest)
+    {[{:closed, {:error, :unexpected_tcp_close}} | next_results], c}
   end
 
-  defp cancel_timer(timer, timer_msg, ref) when is_reference(ref) do
-    case Process.cancel_timer(timer) do
-      false ->
-        receive do
-          {^ref, ^timer_msg} -> :ok
-        after
-          0 -> raise "No timer or its message"
-        end
-
-      _ ->
-        :ok
-    end
+  defp timer(ref, type, time) do
+    Process.send_after(self(), {ref, :wesex_timer, type}, time)
   end
 
-  defp process_callback_result(result, connection, rest) do
-    case result do
-      {:ok, callback_state, replies} ->
-        connection = %C{connection | callback_state: callback_state}
-        {connection, new_events} = do_replies(connection, replies)
-        do_events(connection, rest ++ new_events)
+  defp cancel_timer({timer_type, timer}) do
+    Process.cancel_timer(timer)
 
-      {{:stop, stop_code, stop_reason}, callback_state, replies} ->
-        connection = %C{connection | callback_state: callback_state}
-        {connection, new_events_1} = do_replies(connection, replies)
-        {connection, new_events_2} = local_close(connection, stop_code, stop_reason)
-        do_events(connection, rest ++ new_events_1 ++ new_events_2)
-    end
-  end
-
-  defp local_close(%C{status: {:open, _}} = con, stop_code, stop_reason) do
-    {new_events, adapter_state} =
-      con.adapter.local_close({stop_code, stop_reason}, con.adapter_state)
-
-    {timer, :ping_timer} = con.timer
-    :ok = cancel_timer(timer, :ping_timer, con.ref)
-
-    close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
-
-    {%C{
-       con
-       | status: :local_closing,
-         adapter_state: adapter_state,
-         timer: {close_timeout, :close_timeout}
-     }, new_events}
-  end
-
-  defp local_close(%C{status: :remote_closing} = con, stop_code, stop_reason) do
-    {new_events, adapter_state} =
-      con.adapter.local_close({stop_code, stop_reason}, con.adapter_state)
-
-    {%C{con | status: :waiting_tcp_close, adapter_state: adapter_state}, new_events}
-  end
-
-  defp local_close(%C{status: :handshaking} = con, _stop_code, _stop_reason) do
-    {new_events, adapter_state} = con.adapter.abort(con.adapter_state)
-
-    {timer, :handshake_timeout} = con.timer
-    :ok = cancel_timer(timer, :handshake_timeout, con.ref)
-    close_timeout = Process.send_after(self(), {con.ref, :close_timeout}, @close_timeout)
-
-    {%C{
-       con
-       | status: :waiting_tcp_close,
-         adapter_state: adapter_state,
-         timer: {close_timeout, :close_timeout}
-     }, new_events}
-  end
-
-  defp local_close(%C{status: status} = con, _stop_code, _stop_reason)
-       when status in [:local_closing, :waiting_tcp_close] do
-    {con, []}
-  end
-
-  defp do_replies(con, []), do: {con, []}
-
-  defp do_replies(%C{status: {:open, _}} = con, [{type, data, ref} | rest])
-       when is_msg_type(type) do
-    case con.adapter.send({type, data}, con.adapter_state) do
-      {:ok, new_events, adapter_state} ->
-        con = %C{con | adapter_state: adapter_state}
-        sent_event = {:sent, ref}
-        con = do_events(con, [sent_event])
-        {con, events} = do_replies(con, rest)
-        {con, new_events ++ events}
-
-      {:error, new_events, adapter_state, reason} ->
-        con = %C{con | adapter_state: adapter_state}
-        sent_event = {:send_error, ref, reason}
-        con = do_events(con, [sent_event])
-
-        {con, events} = do_replies(con, rest)
-        {con, new_events ++ events}
+    receive do
+      ^timer_type -> :ok
+    after
+      0 -> :ok
     end
   end
 end

@@ -21,6 +21,9 @@ defmodule Wesex.MintAdapter do
              ws: :waiting_status | :waiting_headers | Mint.WebSocket.t()
            )
 
+  # URI construction bogus error
+  @dialyzer {:nowarn_function, connect: 3}
+
   @impl true
   def connect(%URI{} = url, headers, opts) when url.scheme in ["ws", "wss"] do
     http_scheme =

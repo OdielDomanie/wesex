@@ -2,39 +2,6 @@ defmodule Wesex.ConnectionTest do
   use ExUnit.Case, async: true
   alias Wesex.Connection
 
-  defmodule MockCallbacks do
-    @behaviour Connection
-    def init, do: []
-    @impl true
-    def handle_connected(state), do: {:ok, [:connected | state], []}
-    @impl true
-    def handle_in({:text, "reply to this twice"} = msg, callback_state, status) do
-      replies = [
-        {:text, "reply 1", make_ref()},
-        {:text, "reply 2 bad", make_ref()}
-      ]
-
-      {:ok, [{:received, msg, status} | callback_state], replies}
-    end
-
-    def handle_in({:binary, "do stop 1001"} = msg, callback_state, status) do
-      {{:stop, 1001, nil}, [{:received, msg, status} | callback_state], []}
-    end
-
-    def handle_in(msg, callback_state, status) do
-      {:ok, [{:received, msg, status} | callback_state], []}
-    end
-
-    @impl true
-    def handle_message_sent({:sent, ref}, callback_state, open_state) do
-      {:ok, [{:message_confirm, ref, open_state} | callback_state], []}
-    end
-
-    def handle_message_sent({:send_error, ref, reason}, callback_state, open_state) do
-      {:ok, [{:message_error, ref, reason, open_state} | callback_state], []}
-    end
-  end
-
   defmodule MockAdapter do
     @behaviour Wesex.Adapter
     def init, do: []
@@ -44,8 +11,8 @@ defmodule Wesex.ConnectionTest do
     end
 
     @impl true
-    def event(_raw_event, _state) do
-      raise "not implemented"
+    def event(raw_event, state) do
+      {raw_event, state}
     end
 
     @impl true
@@ -78,7 +45,6 @@ defmodule Wesex.ConnectionTest do
     end
   end
 
-  @mock_callbacks MockCallbacks
   @mock_adapter MockAdapter
 
   # [*] --> handshaking: connect/4
@@ -95,12 +61,9 @@ defmodule Wesex.ConnectionTest do
 
   setup do
     connection = %Connection{
-      callbacks: @mock_callbacks,
-      callback_state: @mock_callbacks.init(),
       status: :handshaking,
       adapter: @mock_adapter,
       adapter_state: @mock_adapter.init(),
-      # timer: nil,
       ref: make_ref(),
       remote_stop_code_reason: nil
     }
@@ -108,18 +71,12 @@ defmodule Wesex.ConnectionTest do
     %{connection: connection}
   end
 
-  defp add_timer(connection, timer_type, time \\ 5_000) do
-    timer = Process.send_after(self(), {connection.ref, timer_type}, time)
-    %Connection{connection | timer: {timer, timer_type}}
-  end
-
-  test "connect/5" do
+  test "connect/4" do
     assert {:ok, connection} =
              Connection.connect(
-               @mock_adapter,
-               {@mock_callbacks, @mock_callbacks.init()},
                "wss://foo.test/bar?baz=123",
                [],
+               @mock_adapter,
                []
              )
 
@@ -128,11 +85,9 @@ defmodule Wesex.ConnectionTest do
     assert %Connection{
              adapter: @mock_adapter,
              adapter_state: [{:connected, ^uri}],
-             callbacks: @mock_callbacks,
-             callback_state: [],
              ref: ref,
              status: :handshaking,
-             timer: {timer, :handshake_timeout}
+             timer: {:handshake_timeout, timer}
            } = connection
 
     assert is_reference(ref)
@@ -144,40 +99,40 @@ defmodule Wesex.ConnectionTest do
       %Connection{connection | status: {:open, :unponged}}
       |> add_timer(:ping_timer)
 
-    assert {:ok, connection} =
+    assert {:ok, results, connection} =
              Connection.send(
                connection,
                {:binary, "foo"}
              )
 
     assert connection.status == {:open, :unponged}
-    # no message confirm with send/2
-    # assert connection.callback_state == [{:message_confirm, {:binary, "foo"}, :open}]
     assert connection.adapter_state == [{:sent, {:binary, "foo"}}]
+    assert results == []
   end
 
-  describe "do_events/2" do
+  describe "event/2" do
     # 2
     test "transitions from handshaking to open on :handshake_complete", %{connection: connection} do
       connection = add_timer(connection, :handshake_timeout)
 
-      connection = Connection.do_events(connection, [:handshake_complete])
+      {results, connection} = Connection.event(connection, [:handshake_complete])
       assert connection.status == {:open, :ponged}
-      assert {_ping_timer, :ping_timer} = connection.timer
+      assert {:ping_timer, _timer} = connection.timer
       ref = connection.ref
-      assert_receive {^ref, :ping_timer}, 10
-      assert connection.callback_state == [:connected]
+      assert_receive {^ref, :wesex_timer, :ping_timer}, 10
+      assert results == [:open]
     end
 
     # 1
     test "transitions to closed on handshake timeout", %{connection: connection} do
       connection = add_timer(connection, :handshake_timeout)
-      connection = Connection.do_events(connection, [:handshake_timeout])
+
+      {results, connection} =
+        Connection.event(connection, {connection.ref, :wesex_timer, :handshake_timeout})
 
       assert connection.status == :closed
       assert connection.timer == nil
-      assert connection.callback_state == []
-      assert connection.adapter_state == [:tcp_closed]
+      assert results == [closed: {:error, :closed_in_handshake}]
     end
 
     # 3
@@ -187,11 +142,13 @@ defmodule Wesex.ConnectionTest do
         |> add_timer(:ping_timer)
 
       # Timer is sent
-      _ = connection.timer |> elem(0) |> Process.cancel_timer()
+      _ = connection.timer |> elem(1) |> Process.cancel_timer()
 
-      connection = Connection.do_events(connection, [:ping_timer])
+      {results, connection} =
+        Connection.event(connection, {connection.ref, :wesex_timer, :ping_timer})
+
       assert connection.status == :local_closing
-      assert connection.callback_state == []
+      assert results == [{:closing, {:local, {1002, "ping timeout"}}}]
       assert connection.adapter_state == [{:sent_close, 1002, "ping timeout"}]
     end
 
@@ -204,29 +161,18 @@ defmodule Wesex.ConnectionTest do
           %Connection{connection | status: {:open, @ponged}}
           |> add_timer(:ping_timer)
 
-        connection = Connection.do_events(connection, [{:close, 1000, "normal closure"}])
+        {results, connection} = Connection.event(connection, [{:close, 1000, "normal closure"}])
         assert connection.status == :waiting_tcp_close
         assert connection.adapter_state == [{:sent_close, 1000, nil}]
-        assert connection.callback_state == []
+        assert results == [{:closing, {:remote, {1000, "normal closure"}}}]
       end
 
       test "handles message event in open,#{@ponged} state", %{connection: connection} do
         connection = %Connection{connection | status: {:open, @ponged}}
-        connection = Connection.do_events(connection, [{:text, "foo"}])
+        {results, connection} = Connection.event(connection, [{:text, "foo"}])
         assert connection.status == {:open, @ponged}
-        assert connection.callback_state == [{:received, {:text, "foo"}, :open}]
+        assert results == [{:received, {:text, "foo"}}]
       end
-    end
-
-    test "handles stop response from msg in open state", %{connection: connection} do
-      connection = %Connection{connection | status: {:open, :ponged}} |> add_timer(:ping_timer)
-      {old_timer, :ping_timer} = connection.timer
-      connection = Connection.do_events(connection, [{:binary, "do stop 1001"}])
-      assert connection.status == :local_closing
-      assert {timer, :close_timeout} = connection.timer
-      assert_in_delta Process.read_timer(timer), 4_000, 100
-      assert not Process.read_timer(old_timer)
-      assert connection.adapter_state == [{:sent_close, 1001, nil}]
     end
 
     test "handles message event in closing state", %{connection: connection} do
@@ -234,43 +180,21 @@ defmodule Wesex.ConnectionTest do
         %Connection{connection | status: :local_closing}
         |> add_timer(:close_timeout)
 
-      connection = Connection.do_events(connection, [{:text, "foo"}])
+      {results, connection} = Connection.event(connection, [{:text, "foo"}])
       assert connection.status == :local_closing
-      assert connection.callback_state == [{:received, {:text, "foo"}, :closing}]
+      assert results == [{:received, {:text, "foo"}}]
     end
 
-    test "handles reply return to message event in open state", %{connection: connection} do
-      connection = %Connection{connection | status: {:open, :ponged}}
-      connection = Connection.do_events(connection, [{:text, "reply to this twice"}])
-      assert connection.status == {:open, :ponged}
-
-      assert connection.adapter_state == [
-               {:sent, {:text, "reply 2 bad"}},
-               {:sent, {:text, "reply 1"}}
-             ]
-
-      assert [
-               {:message_error, ref2, :mock_reason, :open},
-               {:message_confirm, ref1, :open},
-               {:received, {:text, "reply to this twice"}, :open}
-             ] =
-               connection.callback_state
-
-      assert is_reference(ref2) and is_reference(ref1)
-    end
-
-    #
     test "transitions from unponged to ponged on pong", %{connection: connection} do
       connection =
         %Connection{connection | status: {:open, :unponged}}
         |> add_timer(:ping_timer)
 
       timer = connection.timer
-      connection = Connection.do_events(connection, pong: nil)
+      {results, connection} = Connection.event(connection, [{:pong, nil}])
       assert connection.status == {:open, :ponged}
       assert connection.timer == timer
-      assert connection.callback_state == []
-      assert connection.adapter_state == []
+      assert results == []
     end
 
     test "ignores pong when ponged ", %{connection: connection} do
@@ -279,33 +203,31 @@ defmodule Wesex.ConnectionTest do
         |> add_timer(:ping_timer)
 
       timer = connection.timer
-      connection = Connection.do_events(connection, pong: nil)
+      {results, connection} = Connection.event(connection, [{:pong, nil}])
       assert connection.status == {:open, :ponged}
       assert connection.timer == timer
-      assert connection.callback_state == []
-      assert connection.adapter_state == []
+      assert results == []
     end
 
-    #
     test "replies to ping", %{connection: connection} do
       connection =
         %Connection{connection | status: {:open, :unponged}}
         |> add_timer(:ping_timer)
 
       timer = connection.timer
-      connection = Connection.do_events(connection, [{:ping, "bar"}])
+      {results, connection} = Connection.event(connection, [{:ping, "bar"}])
       assert connection.status == {:open, :unponged}
       assert connection.timer == timer
-      assert connection.callback_state == []
+      assert results == []
       assert connection.adapter_state == [{:sent_pong, "bar"}]
     end
 
     # 7
     test "handles unexpected :tcp_close in handshaking state", %{connection: connection} do
       connection = add_timer(connection, :ping_timer)
-      connection = Connection.do_events(connection, [:tcp_close])
+      {results, connection} = Connection.event(connection, [:tcp_close])
       assert connection.status == :closed
-      assert connection.callback_state == []
+      assert results == [{:closed, {:error, :unexpected_tcp_close}}]
     end
 
     # 8
@@ -314,16 +236,15 @@ defmodule Wesex.ConnectionTest do
         %Connection{connection | status: {:open, :ponged}}
         |> add_timer(:ping_timer)
 
-      {timer, _} = connection.timer
-      connection = Connection.do_events(connection, [:tcp_close])
+      {_, timer} = connection.timer
+      {results, connection} = Connection.event(connection, [:tcp_close])
 
       assert connection.status == :closed
-      assert connection.callback_state == []
+      assert results == [{:closed, {:error, :unexpected_tcp_close}}]
       assert connection.timer == nil
       assert not Process.read_timer(timer)
     end
 
-    #
     test "transitions from local_closing to tcp-closing on remote close", %{
       connection: connection
     } do
@@ -331,12 +252,12 @@ defmodule Wesex.ConnectionTest do
         %Connection{connection | status: :local_closing}
         |> add_timer(:close_timeout)
 
-      {timer, _} = connection.timer
+      {_, timer} = connection.timer
 
-      connection = Connection.do_events(connection, [{:close, 1000, nil}])
+      {results, connection} = Connection.event(connection, [{:close, 1000, nil}])
       assert connection.status == :waiting_tcp_close
-      assert connection.timer == {timer, :close_timeout}
-      assert connection.callback_state == []
+      assert connection.timer == {:close_timeout, timer}
+      assert results == []
     end
 
     # 9
@@ -345,12 +266,12 @@ defmodule Wesex.ConnectionTest do
         %Connection{connection | status: :waiting_tcp_close}
         |> add_timer(:close_timeout)
 
-      {timer, _} = connection.timer
+      {_, timer} = connection.timer
 
-      connection = Connection.do_events(connection, [:tcp_close])
+      {results, connection} = Connection.event(connection, [:tcp_close])
       assert connection.status == :closed
       assert connection.timer == nil
-      assert connection.callback_state == []
+      assert results == [{:closed, {:remote, connection.remote_stop_code_reason}}]
       assert not Process.read_timer(timer)
     end
 
@@ -363,10 +284,12 @@ defmodule Wesex.ConnectionTest do
 
       Process.sleep(1)
 
-      connection = Connection.do_events(connection, [:close_timeout])
+      {results, connection} =
+        Connection.event(connection, {connection.ref, :wesex_timer, :close_timeout})
+
       assert connection.status == :closed
       assert connection.timer == nil
-      assert connection.callback_state == []
+      assert results == [closed: {:error, :timeout}]
       assert connection.adapter_state == [:tcp_closed]
     end
 
@@ -378,45 +301,55 @@ defmodule Wesex.ConnectionTest do
 
       Process.sleep(1)
 
-      connection = Connection.do_events(connection, [:close_timeout])
+      {results, connection} =
+        Connection.event(connection, {connection.ref, :wesex_timer, :close_timeout})
+
       assert connection.status == :closed
       assert connection.timer == nil
-      assert connection.callback_state == []
+      assert results == [closed: {:error, :timeout}]
       assert connection.adapter_state == [:tcp_closed]
     end
 
-    #
     test "transitions from ponged to unponged on ping timer", %{connection: connection} do
       connection =
         %Connection{connection | status: {:open, :ponged}}
         |> add_timer(:ping_timer)
 
-      {old_timer, :ping_timer} = connection.timer
+      {:ping_timer, old_timer} = connection.timer
 
       # Timer is sent
       _ = Process.cancel_timer(old_timer)
 
-      connection = Connection.do_events(connection, [:ping_timer])
+      {results, connection} =
+        Connection.event(connection, {connection.ref, :wesex_timer, :ping_timer})
+
       assert connection.status == {:open, :unponged}
-      assert {new_timer, :ping_timer} = connection.timer
+      assert {:ping_timer, new_timer} = connection.timer
       assert old_timer != new_timer
       assert_in_delta Process.read_timer(new_timer), 10_000, 100
-      assert connection.callback_state == []
+      assert results == []
       assert connection.adapter_state == [:sent_ping]
     end
 
     test "ignores ping event in local_closing state", %{connection: connection} do
       connection = %Connection{connection | status: :local_closing}
-      connection = Connection.do_events(connection, [{:ping, nil}])
+      {results, connection} = Connection.event(connection, [{:ping, nil}])
       assert connection.status == :local_closing
+      assert results == []
       assert connection.adapter_state == []
     end
 
     test "ignores pong event in local_closing state", %{connection: connection} do
       connection = %Connection{connection | status: :local_closing}
-      connection = Connection.do_events(connection, pong: nil)
+      {results, connection} = Connection.event(connection, [{:pong, nil}])
       assert connection.status == :local_closing
+      assert results == []
       assert connection.adapter_state == []
     end
+  end
+
+  defp add_timer(connection, timer_type, time \\ 5_000) do
+    timer = Process.send_after(self(), {connection.ref, :wesex_timer, timer_type}, time)
+    %Connection{connection | timer: {timer_type, timer}}
   end
 end
