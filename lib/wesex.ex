@@ -1,109 +1,52 @@
 defmodule Wesex do
-  #   @moduledoc """
-  #   Defines a GenServer that acts as a websocket client.
+  @moduledoc """
+  Example usage:
 
-  #   Using (`use`) this module does the following:
+      defmodule AutobahnTest do
+        alias Wesex.Connection
+        use GenServer
 
-  #   * `use GenServer`
-  #   * defines overridable `init/1`
-  #     * Requires a keyword list:
-  #       * `cb_state`
-  #       * `callbacks`
-  #       * `url`
-  #       * `adapter`, defaults to `Wesex.MintAdapter`
-  #       * `headers`, defaults to `[]`
-  #       * `adapter_opts`, defaults to []
-  #     * Sets `trap_exit` process flag
-  #     * Calls `Wesex.Connection.connect/5`.
-  #       * **Returns** `{:ok, Wesex.Connection.t()}` if successful,
-  #         or `{:stop, reason}` if `connect` returns error
+        def start_link(opts) do
+          {wesex_opts, genserver_opts} = Keyword.split(opts, [:url, :headers, :adapter_opts, :init_arg])
+          GenServer.start_link(__MODULE__, wesex_opts, genserver_opts)
+        end
 
-  #   * defines overridable `handle_info/2`.
-  #     This feeds received messages to `Wesex.Connection.event/2` to mutate the state.
-  #     Returns `false` instead of a valid callback return value if the message is not a
-  #     connection event.
 
-  #   * defines overridable `terminate/2` that starts the closing handshake and
-  #     continues to process received messages until the connection is closed.
+        @impl GenServer
+        def init(url: url) do
+          {:ok, %{url: url, conn: nil}, {:continue, :connect}}
+        end
 
-  #   The defines GenServer has `Wesex.Connection.t` as its state.
+        @impl GenServer
+        def handle_continue(:connect, state) do
+          {:ok, conn} = Connection.connect(state.url)
+          {:noreply, %{state | conn: conn}}
+        end
 
-  #   When overriden, the functions should always call `super` as well.
-  #   """
+        @impl GenServer
+        def handle_info(info, state) do
+          {events, c} = Connection.event(state.conn, info)
+          do_events(%{state | conn: c}, events)
+        end
 
-  #   alias Wesex.MintAdapter
-  #   alias __MODULE__.Connection
+        defp do_events(state, []), do: {:noreply, state}
 
-  #   defmacro __using__(arg) do
-  #     quote do
-  #       alias Wesex.Connection
+        defp do_events(state, [{:received, msg} | rest]) do
+          {_, results, c} = Wesex.Connection.send(state.conn, msg)
+          do_events(%{state | conn: c}, rest ++ results)
+        end
 
-  #       use GenServer, unquote(arg)
+        defp do_events(state, [:open | rest]) do
+          do_events(state, rest)
+        end
 
-  #       @impl GenServer
-  #       def init(opts) do
-  #         Process.flag(:trap_exit, true)
+        defp do_events(state, [{:closing, _} | rest]) do
+          do_events(state, rest)
+        end
 
-  #         cb_state = Keyword.fetch!(opts, :cb_state)
-  #         callbacks = Keyword.fetch!(opts, :callbacks)
-  #         adapter = opts[:adapter] || MintAdapter
-  #         url = Keyword.fetch!(opts, :url)
-  #         headers = opts[:headers] || []
-  #         adapter_opts = opts[:adapter_opts] || []
-
-  #         case Connection.connect(adapter, {callbacks, cb_state}, url, headers, adapter_opts) do
-  #           {:ok, conn} ->
-  #             {:ok, conn}
-
-  #           {:error, reason} ->
-  #             {:stop, reason}
-  #         end
-  #       end
-
-  #       @impl GenServer
-  #       def handle_info(msg, conn) do
-  #         case Connection.event(conn, msg) do
-  #           %Connection{} = conn ->
-  #             if Connection.short_status(conn) == :closed do
-  #               {:stop, :normal, conn}
-  #             else
-  #               {:noreply, conn}
-  #             end
-
-  #           false ->
-  #             false
-  #         end
-  #       end
-
-  #       @impl GenServer
-  #       def terminate(reason, %Connection{} = con) do
-  #         con =
-  #           if reason == :normal or match?({:shutdown, _}, reason) do
-  #             if Connection.short_status(con) in [:handshaking, :open] do
-  #               Connection.close(con, 1000, nil)
-  #             else
-  #               con
-  #             end
-  #           else
-  #             Connection.abort(con)
-  #           end
-
-  #         recv_until_closed(con)
-  #       end
-
-  #       defp recv_until_closed(%Connection{status: :closed}), do: :ok
-
-  #       defp recv_until_closed(%Connection{} = con) do
-  #         receive do
-  #           msg ->
-  #             case Connection.event(con, msg) do
-  #               false -> recv_until_closed(con)
-  #               %Connection{} = con -> recv_until_closed(con)
-  #             end
-  #         end
-  #       end
-
-  #       defoverridable init: 1, handle_info: 2, terminate: 2
-  #     end
-  #   end
+        defp do_events(state, [{:closed, _} | _rest]) do
+          {:stop, :normal, state}
+        end
+      end
+  """
 end
