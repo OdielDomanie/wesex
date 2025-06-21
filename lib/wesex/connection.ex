@@ -277,7 +277,8 @@ defmodule Wesex.Connection do
   defp do_close(%C{status: {:open, _}} = c, code_reason) do
     cancel_timer(c.timer)
     {adp_results, adp_state} = c.adapter.local_close(code_reason, c.adapter_state)
-    c = %{c | adapter_state: adp_state, status: :local_closing, timer: nil}
+    timer = timer(c.ref, :close_timeout, @close_timeout)
+    c = %{c | adapter_state: adp_state, status: :local_closing, timer: {:close_timeout, timer}}
     {next_results, c} = do_adapter_results(c, adp_results)
     {[{:closing, {:local, code_reason}} | next_results], c}
   end
@@ -371,7 +372,7 @@ defmodule Wesex.Connection do
   defp do_adapter_results(%C{status: {:open, _}} = c, [{:close, code, reason} | rest]) do
     {adp_results_new, adp_state} = c.adapter.local_close({code, nil}, c.adapter_state)
     cancel_timer(c.timer)
-    close_timeout = timer(c.ref, :ping_timer, @close_timeout)
+    close_timeout = timer(c.ref, :close_timeout, @close_timeout)
 
     c = %{
       c
