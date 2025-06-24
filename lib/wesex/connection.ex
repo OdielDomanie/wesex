@@ -40,7 +40,8 @@ defmodule Wesex.Connection do
           adapter_state: any(),
           timer: {reference(), timer_type()} | nil,
           ref: reference(),
-          remote_stop_code_reason: nil | stop_code_reason()
+          remote_stop_code_reason: nil | stop_code_reason(),
+          ping_timeout: :close | (-> any())
         }
 
   @type input_event :: adapter_event | {reference, :wesex_timer, timer_type}
@@ -91,7 +92,8 @@ defmodule Wesex.Connection do
     :adapter_state,
     :timer,
     :ref,
-    :remote_stop_code_reason
+    :remote_stop_code_reason,
+    ping_timeout: :close
   ]
 
   @handshake_timeout 4_000
@@ -225,7 +227,7 @@ defmodule Wesex.Connection do
 
         do_adapter_results(c, adp_results)
 
-      {{:open, :unponged}, :ping_timer} ->
+      {{:open, :unponged}, :ping_timer} when c.ping_timeout == :close ->
         # 1002: protocol error
         {adp_results, adp_state} = c.adapter.local_close({1002, "ping timeout"}, c.adapter_state)
         timer = timer(c.ref, :close_timeout, @close_timeout)
@@ -239,6 +241,21 @@ defmodule Wesex.Connection do
 
         {results, c} = do_adapter_results(c, adp_results)
         {[{:closing, {:local, {1002, "ping timeout"}}} | results], c}
+
+      {{:open, :unponged}, :ping_timer} when is_function(c.ping_timeout) ->
+        c.ping_timeout.()
+
+        {adp_results, adp_state} = c.adapter.send_ping(c.adapter_state)
+        timer = timer(c.ref, :ping_timer, @ping_intv)
+
+        c = %{
+          c
+          | adapter_state: adp_state,
+            status: {:open, :unponged},
+            timer: {:ping_timer, timer}
+        }
+
+        do_adapter_results(c, adp_results)
 
       {status, :close_timeout} when status in [:local_closing, :waiting_tcp_close] ->
         {[:tcp_close], adp_state} = c.adapter.abort(c.adapter_state)
