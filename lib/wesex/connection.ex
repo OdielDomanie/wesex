@@ -438,4 +438,8 @@ defmodule Wesex.Connection do
       0 -> :ok
     end
   end
+
+  defp cancel_timer(nil) do
+    :ok
+  end
 end
